@@ -12,8 +12,8 @@ import re
 
 # Utils
 def ip_strton(ip_address):
-    # struct.unpack("I", socket.inet_aton(ip_address))[0]
-    return socket.htonl((int) (ipaddress.ip_address(ip_address)))
+    return struct.unpack("I", socket.inet_aton(ip_address))[0]
+    # return socket.htonl((int) (ipaddress.ip_address(ip_address)))
 
 def ip_ntostr(ip_address):
     if isinstance(ip_address, ct.c_uint):
@@ -27,7 +27,8 @@ def mac_strtob(mac_address):
     return bytes
 
 def mac_btostr(mac_address):
-    bytestr = bytes(mac_address).hex()
+    #bytestr = bytes(mac_address).hex()
+    bytestr = binascii.hexlify(bytearray(mac_address))
     return ':'.join(bytestr[i:i+2] for i in range(0,12,2))
 
 def ip_mac_tostr(mac_address, ip_address):
