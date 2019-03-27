@@ -111,7 +111,7 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_DROP;
     if (udp_len > 512) // TODO use a more approriate max value
         return XDP_DROP;
-    //udp_len = udp_len & 0x1ff;
+    udp_len = udp_len & 0x1ff;
     if ((void *) udp + udp_len > data_end)
         return XDP_DROP;
     
