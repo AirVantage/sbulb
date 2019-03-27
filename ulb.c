@@ -20,7 +20,7 @@
 				##__VA_ARGS__);			\
 })
 
-/*__attribute__((__always_inline__))
+__attribute__((__always_inline__))
 static inline __u16 csum_fold_helper(__u64 csum) {
   int i;
   #pragma unroll
@@ -59,7 +59,7 @@ static inline void ipv4_l4_csum(void *data_start, __u32 data_size,
   *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
   *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
   *csum = csum_fold_helper(*csum);
-}*/
+}
 
 __section("prog")
 int xdp_prog(struct xdp_md *ctx) {
@@ -162,7 +162,7 @@ int xdp_prog(struct xdp_md *ctx) {
         }
     } else {
         return XDP_PASS;
-    }
+    }*/
   
     // Update IP checksum
     // TODO support IP header with variable size
@@ -175,7 +175,7 @@ int xdp_prog(struct xdp_md *ctx) {
     udp->check = 0;
     cs = 0;
     ipv4_l4_csum(udp, udp_len, &cs, iph) ;
-    udp->check = cs;*/
+    udp->check = cs;
 
     return XDP_PASS;
 }
