@@ -1,36 +1,26 @@
-#define KBUILD_MODNAME "foo"
-#include <uapi/linux/bpf.h>
 #include <linux/bpf.h>
-#include <linux/icmp.h>
 #include <linux/if_ether.h>
-#include <linux/if_vlan.h>
+#include "bpf_endian.h"
+#include "bpf_helpers.h"
 #include <linux/in.h>
 #include <linux/ip.h>
-#include <linux/tcp.h>
 #include <linux/udp.h>
 
 /* 0x3FFF mask to check for fragment offset field */
 #define IP_FRAGMENTED 65343
 
-// MAC address
-typedef unsigned char mac[6];
+#ifndef __section
+# define __section(NAME)                  \
+   __attribute__((section(NAME), used))
+#endif
+#define bpf_printk(fmt, ...)					\
+({								\
+	       char ____fmt[] = fmt;				\
+	       bpf_trace_printk(____fmt, sizeof(____fmt),	\
+				##__VA_ARGS__);			\
+})
 
-// Real Server structure (MAC address + IP address)
-struct server {
-    __be32 ipAddr;
-    unsigned char macAddr[ETH_ALEN];
-};
-
-// packet structure to log load balancing
-struct packet {
-    unsigned char dmac[ETH_ALEN];
-    unsigned char smac[ETH_ALEN];
-    __be32 daddr;
-    __be32 saddr;
-};
-BPF_PERF_OUTPUT(events);
-
-__attribute__((__always_inline__))
+/*__attribute__((__always_inline__))
 static inline __u16 csum_fold_helper(__u64 csum) {
   int i;
   #pragma unroll
@@ -69,16 +59,10 @@ static inline void ipv4_l4_csum(void *data_start, __u32 data_size,
   *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
   *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
   *csum = csum_fold_helper(*csum);
-}
+}*/
 
-// A map which contains port to redirect
-BPF_HASH(ports, __be16, int, 10); // TODO how to we handle the max number of port we support.
-// A map which contains real server 
-BPF_HASH(realServers, int, struct server, 10); // TODO how to we handle the max number of real server.
-// Virtual IP is accessible via the 'VIP' constant
-
-int xdp_prog(struct CTXTYPE *ctx) {
-
+__section("prog")
+int xdp_prog(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
 
@@ -127,11 +111,12 @@ int xdp_prog(struct CTXTYPE *ctx) {
         return XDP_DROP;
     if (udp_len > 512) // TODO use a more approriate max value
         return XDP_DROP;
-    udp_len = udp_len & 0x1ff;
+    //udp_len = udp_len & 0x1ff;
     if ((void *) udp + udp_len > data_end)
         return XDP_DROP;
+    
     // Is it ingress traffic ? destination IP == VIP
-    if (iph->daddr == VIP) {
+    /*if (iph->daddr == VIP) {
         if (!ports.lookup(&(udp->dest))) {
             return XDP_PASS;
         } else {
@@ -190,14 +175,9 @@ int xdp_prog(struct CTXTYPE *ctx) {
     udp->check = 0;
     cs = 0;
     ipv4_l4_csum(udp, udp_len, &cs, iph) ;
-    udp->check = cs;
+    udp->check = cs;*/
 
-    // Log packet after
-    struct packet pkt = {};
-    memcpy(&pkt, data, sizeof(pkt)); // crappy
-    pkt.daddr = iph->daddr;
-    pkt.saddr = iph->saddr;
-    events.perf_submit(ctx,&pkt,sizeof(pkt));
-
-    return XDP_TX;
+    return XDP_PASS;
 }
+
+char __license[] __section("license") = "GPL";
