@@ -66,55 +66,77 @@ int xdp_prog(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
 
+    bpf_printk("BEGIN\n");
+
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/if_ether.h
     struct ethhdr * eth = data;
-    if (eth + 1 > data_end)
+    if (eth + 1 > data_end) {
+        bpf_printk("Invalid ethernet size\n");
         return XDP_DROP;
+    }
 
     // Handle only IP packets (v4?)
-    if (eth->h_proto != bpf_htons(ETH_P_IP)){
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) {
+        bpf_printk("Not IPV4 packet\n");
         return XDP_PASS;
     }
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/ip.h
     struct iphdr *iph;
     iph = eth + 1;
-    if (iph + 1 > data_end)
+    if (iph + 1 > data_end){
+        bpf_printk("Invalid IP size\n");
         return XDP_DROP;
+    }
     // Minimum valid header length value is 5.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
-    if (iph->ihl < 5)
+    if (iph->ihl < 5){
+        bpf_printk("Invalid IP header size, too small:%d\n",iph->ihl);
         return XDP_DROP;
+    }
     // IP header size is variable because of options field.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
     //if ((void *) iph + iph->ihl * 4 > data_end)
     //    return XDP_DROP;
     // TODO support IP header with variable size
-    if (iph->ihl != 5) 
+    if (iph->ihl != 5){
+        bpf_printk("ilh != 5\n");
         return XDP_PASS;
+    }
     // Do not support fragmented packets as L4 headers may be missing
-    if (iph->frag_off & IP_FRAGMENTED) 
+    if (iph->frag_off & IP_FRAGMENTED){
+        bpf_printk("Fragmented IP\n");
         return XDP_PASS; // TODO should we support it ?
+    }
 
     // We only handle UDP traffic
     if (iph->protocol != IPPROTO_UDP) {
+        bpf_printk("Not UDP packet\n");
         return XDP_PASS;
     }
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
     struct udphdr *udp;
     //udp = (void *) iph + iph->ihl * 4;
     udp = iph + 1;
-    if (udp + 1 > data_end)
+    if (udp + 1 > data_end){
+        bpf_printk("Invalid UDP Header size\n");
         return XDP_DROP;
+    }
     __u16 udp_len = bpf_ntohs(udp->len);
-    if (udp_len < 8)
+    if (udp_len < 8){
+        bpf_printk("Invalid UDP header size, too small : %d\n", udp_len);
         return XDP_DROP;
-    if (udp_len > 512) // TODO use a more approriate max value
+    }
+    if (udp_len > 512) { // TODO use a more approriate max value
+        bpf_printk("Invalid UDP header size, too big : %d\n", udp_len);
         return XDP_DROP;
+    }
     //udp_len = udp_len & 0x1ff;
-    if ((void *) udp + udp_len > data_end)
+    if ((void *) udp + udp_len > data_end){
+        bpf_printk("Invalid UDP packet size :%d\n", udp_len);
         return XDP_DROP;
-    
+    }
+
     // Is it ingress traffic ? destination IP == VIP
     /*if (iph->daddr == VIP) {
         if (!ports.lookup(&(udp->dest))) {
@@ -176,6 +198,8 @@ int xdp_prog(struct xdp_md *ctx) {
     cs = 0;
     ipv4_l4_csum(udp, udp_len, &cs, iph) ;
     udp->check = cs;*/
+
+    bpf_printk("END\n");
 
     return XDP_PASS;
 }
