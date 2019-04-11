@@ -108,8 +108,10 @@ while 1:
     try:
         b.perf_buffer_poll()
         # DEBUG STUFF
-        #(task, pid, cpu, flags, ts, msg) = b.trace_fields()
-        #print("%s \n" % (msg))
+        #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
+        #while msg:
+        #    print("%s \n" % (msg))
+        #    (task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
     except ValueError:
         continue
     except KeyboardInterrupt:

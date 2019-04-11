@@ -71,6 +71,28 @@ static inline void ipv4_l4_csum(void *data_start, __u32 data_size,
   *csum = csum_fold_helper(*csum);
 }
 
+// Update checksum following RFC 1624 (Eqn. 3): https://tools.ietf.org/html/rfc1624
+//     HC' = ~(~HC + ~m + m')
+// Where :
+//   HC  - old checksum in header
+//   HC' - new checksum in header
+//   m   - old value
+//   m'  - new value
+__attribute__((__always_inline__))
+static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
+    // ~HC 
+    *csum = ~*csum;
+    *csum = *csum & 0xffff;
+    // + ~m
+    __u32 tmp;
+    tmp = ~old_addr;
+    *csum += tmp;
+    // + m
+    *csum += new_addr;
+    // then fold and complement result ! 
+    *csum = csum_fold_helper(*csum);
+}
+
 // A map which contains port to redirect
 BPF_HASH(ports, __be16, int, 10); // TODO how to we handle the max number of port we support.
 // A map which contains real server 
@@ -111,6 +133,7 @@ int xdp_prog(struct CTXTYPE *ctx) {
     // Do not support fragmented packets as L4 headers may be missing
     if (iph->frag_off & IP_FRAGMENTED) 
         return XDP_PASS; // TODO should we support it ?
+    // TODO we should drop packet with ttl = 0
 
     // We only handle UDP traffic
     if (iph->protocol != IPPROTO_UDP) {
@@ -131,6 +154,8 @@ int xdp_prog(struct CTXTYPE *ctx) {
     if ((void *) udp + udp_len > data_end)
         return XDP_DROP;
     // Is it ingress traffic ? destination IP == VIP
+    __be32 old_addr;
+    __be32 new_addr;
     if (iph->daddr == VIP) {
         if (!ports.lookup(&(udp->dest))) {
             return XDP_PASS;
@@ -150,7 +175,13 @@ int xdp_prog(struct CTXTYPE *ctx) {
                 return XDP_PASS;
             }
             memcpy(eth->h_dest, server->macAddr, 6);
+            old_addr = iph->daddr;
+            new_addr = server->ipAddr;
             iph->daddr = server->ipAddr;
+            // TODO should we update id ? 
+            //iph->id = iph->id + 1;
+
+            // TODO we should probably decrement ttl too
         }
     } else
     // Is it egress traffic ? source IP == VIP
@@ -173,7 +204,13 @@ int xdp_prog(struct CTXTYPE *ctx) {
                 return XDP_PASS;
             }
             memcpy(eth->h_source, server->macAddr, 6);
+            old_addr = iph->saddr;
+            new_addr = server->ipAddr;
             iph->saddr = server->ipAddr;
+            // TODO should we update id ? 
+            //iph->id = iph->id + 1 ;
+
+            // TODO we should probably decrement ttl too
         }
     } else {
         return XDP_PASS;
@@ -183,13 +220,13 @@ int xdp_prog(struct CTXTYPE *ctx) {
     // TODO support IP header with variable size
     iph->check = 0;
     __u64 cs = 0 ;
+    // TODO We should consider to use incremental update checksum here too.
     ipv4_csum(iph, sizeof (*iph), &cs);
     iph->check = cs;
 
     // Update UDP checksum
-    udp->check = 0;
-    cs = 0;
-    ipv4_l4_csum(udp, udp_len, &cs, iph) ;
+    cs = udp->check;
+    update_csum(&cs , old_addr, new_addr);
     udp->check = cs;
 
     // Log packet after
