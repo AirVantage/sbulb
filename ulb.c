@@ -93,11 +93,13 @@ static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
     *csum = csum_fold_helper(*csum);
 }
 
+// A map which contains virtual server
+BPF_HASH(virtualServer, int, struct server, 1); 
 // A map which contains port to redirect
 BPF_HASH(ports, __be16, int, 10); // TODO how to we handle the max number of port we support.
-// A map which contains real server 
-BPF_HASH(realServers, int, struct server, 10); // TODO how to we handle the max number of real server.
-// Virtual IP is accessible via the 'VIP' constant
+// maps which contains real server 
+BPF_HASH(realServersArray, int, struct server, 10); // TODO how to we handle the max number of real server.
+BPF_HASH(realServersMap, __be32, struct server, 10); // TODO how to we handle the max number of real server.
 
 int xdp_prog(struct CTXTYPE *ctx) {
 
@@ -153,10 +155,16 @@ int xdp_prog(struct CTXTYPE *ctx) {
     udp_len = udp_len & 0x1ff;
     if ((void *) udp + udp_len > data_end)
         return XDP_DROP;
+    // Get virtual server
+    int zero =  0;
+    struct server * vs = virtualServer.lookup(&zero);
+    if (vs == NULL) {
+	return XDP_PASS;
+    }
     // Is it ingress traffic ? destination IP == VIP
     __be32 old_addr;
     __be32 new_addr;
-    if (iph->daddr == VIP) {
+    if (iph->daddr == vs->ipAddr) {
         if (!ports.lookup(&(udp->dest))) {
             return XDP_PASS;
         } else {
@@ -170,22 +178,22 @@ int xdp_prog(struct CTXTYPE *ctx) {
             // handle ingress traffic
             // TODO support several real server
             int i = 0;
-            struct server * server = realServers.lookup(&i);
-            if (server == NULL) {
+            struct server * rs = realServersArray.lookup(&i);
+            if (rs == NULL) {
                 return XDP_PASS;
             }
-            memcpy(eth->h_dest, server->macAddr, 6);
+            memcpy(eth->h_dest, rs->macAddr, 6);
             old_addr = iph->daddr;
-            new_addr = server->ipAddr;
-            iph->daddr = server->ipAddr;
+            new_addr = rs->ipAddr;
+            iph->daddr = rs->ipAddr;
             // TODO should we update id ? 
             //iph->id = iph->id + 1;
 
             // TODO we should probably decrement ttl too
         }
     } else
-    // Is it egress traffic ? source IP == VIP
-    if (iph->saddr == VIP) {
+    // Is it egress traffic ? source ip == a real server IP
+    if (realServersMap.lookup(&iph->saddr)) {
         if (!ports.lookup(&(udp->source))) {
             return XDP_PASS;
         } else {
@@ -196,17 +204,10 @@ int xdp_prog(struct CTXTYPE *ctx) {
             pkt.saddr = iph->saddr;
             events.perf_submit(ctx,&pkt,sizeof(pkt));
 
-            // handle egress traffic
-            // TODO support several real server
-            int i = 0;
-            struct server * server = realServers.lookup(&i);
-            if (server == NULL) {
-                return XDP_PASS;
-            }
-            memcpy(eth->h_source, server->macAddr, 6);
+            memcpy(eth->h_source, vs->macAddr, 6);
             old_addr = iph->saddr;
-            new_addr = server->ipAddr;
-            iph->saddr = server->ipAddr;
+            new_addr = vs->ipAddr;
+            iph->saddr = vs->ipAddr;
             // TODO should we update id ? 
             //iph->id = iph->id + 1 ;
 

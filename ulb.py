@@ -33,6 +33,9 @@ def mac_btostr(mac_address):
 def ip_mac_tostr(mac_address, ip_address):
     return "{}/{}".format(mac_btostr(mac_address),ip_ntostr(ip_address))
 
+def server_tostr(server):
+    return ip_mac_tostr(server["mac"],server["ip"])
+
 # Custom argument parser
 def mac_ip_parser(s,pat=re.compile("^(.+?)/(.+)$")):
     m = pat.match(s)
@@ -52,23 +55,23 @@ def mac_ip_parser(s,pat=re.compile("^(.+?)/(.+)$")):
 # Parse Arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("ifnet", help="network interface to load balance (e.g. eth0)")
-parser.add_argument("-vip", "--virtual_ip", help="<Required> The virtual IP of this loadbalancer", required=True)
-parser.add_argument("-rs", "--real_server",type=mac_ip_parser, nargs=1, help="<Required> Real server addresse(s)  e.g. 5E:FF:56:A2:AF:15/10.40.0.1", required=True)
+parser.add_argument("-vs", "--virtual_server", type=mac_ip_parser, help="<Required> Virtual server address (e.g. 5E:FF:56:A2:AF:15/10.40.0.1)", required=True)
+parser.add_argument("-rs", "--real_server", type=mac_ip_parser, nargs=1, help="<Required> Real server address(es)  e.g. 5E:FF:56:A2:AF:15/10.40.0.1", required=True)
 parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP port(s) to load balance", required=True)
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
                     help="Use to set bpf verbosity (0 is minimal)", default=0)
 args = parser.parse_args()
 
 # Get configuration from Arguments
-ifnet = args.ifnet                # network interface to attach xdp program
-vip = ip_strton(args.virtual_ip) # virtual ip of load balancer
-real_servers = args.real_server
-ports = args.port                 # ports of to load balance
-debug = args.debug                # bpf verbosity
+ifnet = args.ifnet                   # network interface to attach xdp program
+virtual_server = args.virtual_server # virtual server (ethernet and IP address)
+real_servers = args.real_server      # list of real servers (ethernet and IP address)
+ports = args.port                    # ports to load balance
+debug = args.debug                   # bpf verbosity
 
-print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(vip)))
+print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server['ip'])))
 for real_server in real_servers:
-    print ("VIP:{} <=======> Real Server:{}".format(ip_ntostr(vip), ip_mac_tostr(real_server["mac"],real_server["ip"])))
+    print ("VIP:{} <=======> Real Server:{}".format(server_tostr(virtual_server), server_tostr(real_server)))
 
 
 # Shared structure used for perf_buffer
@@ -81,20 +84,25 @@ class Data(ct.Structure):
     ]
 
 # Compile & attach bpf program
-b = BPF(src_file ="ulb.c", debug=debug, cflags=["-w", "-DVIP={}".format(vip), "-DCTXTYPE=xdp_md"])
+b = BPF(src_file ="ulb.c", debug=debug, cflags=["-w", "-DCTXTYPE=xdp_md"])
 fn = b.load_func("xdp_prog", BPF.XDP)
 b.attach_xdp(ifnet, fn)
 
 # Set Configurations
+## Virtual server config
+virtual_server_map = b.get_table("virtualServer")
+virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(virtual_server['mac']))
 ## Ports configs
 ports_map = b["ports"]
 for port in ports:
     ports_map[ports_map.Key(socket.htons(port))] = ports_map.Leaf(True)
 ## Real servers configs
-real_servers_map = b.get_table("realServers")
+real_servers_array = b.get_table("realServersArray")
+real_servers_map = b.get_table("realServersMap")
 i = 0 
 for real_server in real_servers:
-    real_servers_map[real_servers_map.Key(i)] = real_servers_map.Leaf(real_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(real_server['mac']))
+    real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(real_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(real_server['mac']))
+    real_servers_map[real_servers_map.Key(real_server['ip'])] = real_servers_map.Leaf(real_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(real_server['mac']))
     i+=1
 
 # Utility function to print udp dest NAT.
