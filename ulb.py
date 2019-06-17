@@ -27,6 +27,17 @@ def mac_btostr(mac_address):
 def ip_mac_tostr(mac_address, ip_address):
     return "{}/{}".format(mac_btostr(mac_address),ip_ntostr(ip_address))
 
+def associationType_tostr(atype):
+    if atype == 0:
+        return "replaced by"
+    elif atype == 1:
+        return "(NEW ASSOCIATION)"
+    elif atype == 2:
+        return "(REUSED ASSOCIATION)"
+    else:
+        return "UNKNOWN"
+
+
 def server_tostr(server):
     return ip_ntostr(server["ip"])
 
@@ -42,7 +53,7 @@ def ip_parser(s):
 parser = argparse.ArgumentParser()
 parser.add_argument("ifnet", help="network interface to load balance (e.g. eth0)")
 parser.add_argument("-vs", "--virtual_server", type=ip_parser, help="<Required> Virtual server address (e.g. 10.40.0.1)", required=True)
-parser.add_argument("-rs", "--real_server", type=ip_parser, nargs=1, help="<Required> Real server address(es) (e.g. 10.40.0.1)", required=True)
+parser.add_argument("-rs", "--real_server", type=ip_parser, nargs='+', help="<Required> Real server address(es) (e.g. 10.40.0.1)", required=True)
 parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP port(s) to load balance", required=True)
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
                     help="Use to set bpf verbosity (0 is minimal)", default=0)
@@ -66,7 +77,8 @@ class Data(ct.Structure):
         ("dmac", ct.c_ubyte * 6),   
         ("smac", ct.c_ubyte * 6),
         ("daddr", ct.c_uint),
-        ("saddr", ct.c_uint)
+        ("saddr", ct.c_uint),
+        ("associationType", ct.c_uint)
     ]
 
 # Compile & attach bpf program
@@ -94,7 +106,7 @@ for real_server in real_servers:
 # Utility function to print udp dest NAT.
 def print_event(cpu, data, size):
     event = ct.cast(data, ct.POINTER(Data)).contents
-    print("source {} --> dest {}".format(ip_mac_tostr(event.smac, event.saddr),ip_mac_tostr(event.dmac, event.daddr)))
+    print("source {} --> dest {} {}".format(ip_mac_tostr(event.smac, event.saddr),ip_mac_tostr(event.dmac, event.daddr), associationType_tostr(event.associationType)))
 
 # Loop to read perf buffer
 b["events"].open_perf_buffer(print_event)

@@ -17,12 +17,24 @@ struct server {
     __be32 ipAddr; // TODO remove struct as now there is only 1 field
 };
 
+// keys for association table.
+struct associationKey {
+    __be32 ipAddr; 
+    __be16 port; 
+};
+
+// load balancer state.
+struct state {
+    int nextRS; // new real server index
+};
+
 // packet structure to log load balancing
 struct packet {
     unsigned char dmac[ETH_ALEN];
     unsigned char smac[ETH_ALEN];
     __be32 daddr;
     __be32 saddr;
+    int associationType; // 0:not set,1:new association, 2:existing association
 };
 BPF_PERF_OUTPUT(events);
 
@@ -90,12 +102,49 @@ static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
 }
 
 // A map which contains virtual server
-BPF_HASH(virtualServer, int, struct server, 1); 
+BPF_HASH(virtualServer, int, struct server, 1);
 // A map which contains port to redirect
 BPF_HASH(ports, __be16, int, 10); // TODO how to we handle the max number of port we support.
 // maps which contains real server 
 BPF_HASH(realServersArray, int, struct server, 10); // TODO how to we handle the max number of real server.
 BPF_HASH(realServersMap, __be32, struct server, 10); // TODO how to we handle the max number of real server.
+// association tables (link a foreign peer to a real server)
+BPF_TABLE("lru_hash", struct associationKey, struct server, associationTable, 10000); // TODO how to we handle the max number of association.
+// load balancer state
+BPF_HASH(lbState, int, struct state, 1);
+
+__attribute__((__always_inline__))
+static inline struct server * new_association(struct associationKey * k) {
+    // get index of real server which must handle this peer
+    int zero = 0;
+    struct state * state = lbState.lookup(&zero);
+    int nextRS = 0;
+    if (state != NULL) {
+      nextRS = state->nextRS;
+    }
+
+    // get real server from index.
+    struct server * rs = realServersArray.lookup(&nextRS);
+    if (rs == NULL) {
+        nextRS = 0; // probably index out of bound so we restart from 0
+        rs = realServersArray.lookup(&nextRS);
+        if (rs == NULL) {
+            return NULL; // XDP_ABORTED ?
+        }
+    }
+
+    // update state (next server index)
+    struct state newState = {};
+    newState.nextRS = nextRS + 1;
+    lbState.update(&zero, &newState);
+
+    // create new association
+    struct server newserver = {};
+    newserver.ipAddr = rs->ipAddr;
+    associationTable.insert(k, &newserver);
+
+    return rs;
+}
 
 int xdp_prog(struct CTXTYPE *ctx) {
 
@@ -155,8 +204,10 @@ int xdp_prog(struct CTXTYPE *ctx) {
     int zero =  0;
     struct server * vs = virtualServer.lookup(&zero);
     if (vs == NULL) {
-	return XDP_PASS;
+        return XDP_PASS;
     }
+    // just for log, to know if we create new association or not
+    int associationType = 2;  // 0:not set,1:new association, 2:existing association
     // Is it ingress traffic ? destination IP == VIP
     __be32 old_addr;
     __be32 new_addr;
@@ -169,14 +220,26 @@ int xdp_prog(struct CTXTYPE *ctx) {
             memcpy(&pkt, data, sizeof(pkt)); // crappy
             pkt.daddr = iph->daddr;  
             pkt.saddr = iph->saddr;
+            pkt.associationType = 0;
             events.perf_submit(ctx,&pkt,sizeof(pkt));
 
             // handle ingress traffic
-            // TODO support several real server
-            int i = 0;
-            struct server * rs = realServersArray.lookup(&i);
+            // find real server associated
+            struct associationKey k = {};
+            k.ipAddr = iph->saddr; 
+            k.port = udp->source;
+            struct server * rs = associationTable.lookup(&k);
+            // create association (or real server) does not exists
+            if (rs == NULL || realServersMap.lookup(&rs->ipAddr) == NULL) {
+                rs = new_association(&k);
+                if (rs == NULL) {
+                    return XDP_PASS; // XDP_ABORTED ?
+                }
+                associationType = 1;
+            }
+            // should not happened, mainly needed to make verfier happy
             if (rs == NULL) {
-                return XDP_PASS;
+                return XDP_PASS; // XDP_ABORTED ?
             }
 
             // update eth addr
@@ -193,37 +256,55 @@ int xdp_prog(struct CTXTYPE *ctx) {
 
             // TODO we should probably decrement ttl too
         }
-    } else
-    // Is it egress traffic ? source ip == a real server IP
-    if (realServersMap.lookup(&iph->saddr)) {
-        if (!ports.lookup(&(udp->source))) {
-            return XDP_PASS;
-        } else {
-            // Log packet before
-            struct packet pkt = {};
-            memcpy(&pkt, data, sizeof(pkt)); // crappy
-            pkt.daddr = iph->daddr;  
-            pkt.saddr = iph->saddr;
-            events.perf_submit(ctx,&pkt,sizeof(pkt));
-
-            // handle egress traffic
-            // update eth addr
-            memcpy(eth->h_source, pkt.dmac, 6); // use virtual server MAC address as source
-            memcpy(eth->h_dest, pkt.smac, 6); // we support only one ethernet gateway (so all ethernet traffic should pass thought it)
-
-            // update IP address
-            old_addr = iph->saddr;
-            new_addr = vs->ipAddr;
-            iph->saddr = vs->ipAddr; // use virtual server IP address as source
-
-
-            // TODO should we update id ? 
-            //iph->id = iph->id + 1 ;
-
-            // TODO we should probably decrement ttl too
-        }
     } else {
-        return XDP_PASS;
+        // Is it egress traffic ? source ip == a real server IP
+        struct server * egress_rs = realServersMap.lookup(&iph->saddr);
+        if (egress_rs != NULL) {
+            if (!ports.lookup(&(udp->source))) {
+                return XDP_PASS;
+            } else {
+                // Log packet before
+                struct packet pkt = {};
+                memcpy(&pkt, data, sizeof(pkt)); // crappy
+                pkt.daddr = iph->daddr;  
+                pkt.saddr = iph->saddr;
+                pkt.associationType = 0;
+                events.perf_submit(ctx,&pkt,sizeof(pkt));
+
+                // handle egress traffic
+                // find real server associated to this foreign peer
+                struct associationKey k = {};
+                k.ipAddr = iph->daddr; 
+                k.port = udp->dest;
+                struct server * rs = associationTable.lookup(&k);
+                if (rs == NULL) {
+                    rs = new_association(&k);
+                    if (rs == NULL) {
+                        return XDP_PASS; // XDP_ABORTED ?
+                    }
+                    associationType = 1;  
+                } else if (rs->ipAddr != egress_rs->ipAddr) {
+                    return XDP_DROP;
+                }
+                
+                // update eth addr
+                memcpy(eth->h_source, pkt.dmac, 6); // use virtual server MAC address as source
+                memcpy(eth->h_dest, pkt.smac, 6); // we support only one ethernet gateway (so all ethernet traffic should pass thought it)
+
+                // update IP address
+                old_addr = iph->saddr;
+                new_addr = vs->ipAddr;
+                iph->saddr = vs->ipAddr; // use virtual server IP address as source
+
+
+                // TODO should we update id ? 
+                //iph->id = iph->id + 1 ;
+
+                // TODO we should probably decrement ttl too
+            }
+        } else {
+            return XDP_PASS;
+        }
     }
   
     // Update IP checksum
@@ -244,6 +325,7 @@ int xdp_prog(struct CTXTYPE *ctx) {
     memcpy(&pkt, data, sizeof(pkt)); // crappy
     pkt.daddr = iph->daddr;
     pkt.saddr = iph->saddr;
+    pkt.associationType = associationType;
     events.perf_submit(ctx,&pkt,sizeof(pkt));
 
     return XDP_TX;
