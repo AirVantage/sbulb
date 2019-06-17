@@ -12,13 +12,9 @@
 /* 0x3FFF mask to check for fragment offset field */
 #define IP_FRAGMENTED 65343
 
-// MAC address
-typedef unsigned char mac[6];
-
-// Real Server structure (MAC address + IP address)
+// Real Server structure (IP address)
 struct server {
-    __be32 ipAddr;
-    unsigned char macAddr[ETH_ALEN];
+    __be32 ipAddr; // TODO remove struct as now there is only 1 field
 };
 
 // packet structure to log load balancing
@@ -182,10 +178,16 @@ int xdp_prog(struct CTXTYPE *ctx) {
             if (rs == NULL) {
                 return XDP_PASS;
             }
-            memcpy(eth->h_dest, rs->macAddr, 6);
+
+            // update eth addr
+            memcpy(eth->h_source, pkt.dmac, 6); // use virtual server MAC address as source
+            memcpy(eth->h_dest, pkt.smac, 6); // we support only one ethernet gateway (we support only one ethernet gateway (so all ethernet traffic should pass thought it)
+
+            // update IP address
             old_addr = iph->daddr;
             new_addr = rs->ipAddr;
-            iph->daddr = rs->ipAddr;
+            iph->daddr = rs->ipAddr; // use real server IP address as destination
+
             // TODO should we update id ? 
             //iph->id = iph->id + 1;
 
@@ -204,10 +206,17 @@ int xdp_prog(struct CTXTYPE *ctx) {
             pkt.saddr = iph->saddr;
             events.perf_submit(ctx,&pkt,sizeof(pkt));
 
-            memcpy(eth->h_source, vs->macAddr, 6);
+            // handle egress traffic
+            // update eth addr
+            memcpy(eth->h_source, pkt.dmac, 6); // use virtual server MAC address as source
+            memcpy(eth->h_dest, pkt.smac, 6); // we support only one ethernet gateway (so all ethernet traffic should pass thought it)
+
+            // update IP address
             old_addr = iph->saddr;
             new_addr = vs->ipAddr;
-            iph->saddr = vs->ipAddr;
+            iph->saddr = vs->ipAddr; // use virtual server IP address as source
+
+
             // TODO should we update id ? 
             //iph->id = iph->id + 1 ;
 

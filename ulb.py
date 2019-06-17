@@ -20,12 +20,6 @@ def ip_ntostr(ip_address):
         ip_address = ip_address.value
     return ipaddress.ip_address(socket.ntohl(ip_address))
 
-def mac_strtob(mac_address):
-    bytes = binascii.unhexlify(mac_address.replace(':',''))
-    if len(bytes) is not 6:
-        raise TypeError("mac address must be a 6 bytes arrays")
-    return bytes
-
 def mac_btostr(mac_address):
     bytestr = bytes(mac_address).hex()
     return ':'.join(bytestr[i:i+2] for i in range(0,12,2))
@@ -34,29 +28,21 @@ def ip_mac_tostr(mac_address, ip_address):
     return "{}/{}".format(mac_btostr(mac_address),ip_ntostr(ip_address))
 
 def server_tostr(server):
-    return ip_mac_tostr(server["mac"],server["ip"])
+    return ip_ntostr(server["ip"])
 
 # Custom argument parser
-def mac_ip_parser(s,pat=re.compile("^(.+?)/(.+)$")):
-    m = pat.match(s)
-    if not m:
-        raise argparse.ArgumentTypeError("Invalid address '{}': format is 'MAC_addr/IP_addr' (e.g. 5E:FF:56:A2:AF:15/10.40.0.1)".format(s))
+def ip_parser(s):
     try:
-        mac = mac_strtob(m.group(1))
+        ip = ip_strton(s)
     except Exception as e:
-        raise argparse.ArgumentTypeError("Invalid MAC address '{}' : {}".format(m.group(1), str(e)))
-    try:
-        ip = ip_strton(m.group(2))
-    except Exception as e:
-        raise argparse.ArgumentTypeError("Invalid IP address '{}' : {}".format(m.group(2), str(e)))
-
-    return {"ip":ip,"mac":mac}
+        raise argparse.ArgumentTypeError("Invalid IP address '{}' : {}".format(ip, str(e)))
+    return {"ip":ip}
 
 # Parse Arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("ifnet", help="network interface to load balance (e.g. eth0)")
-parser.add_argument("-vs", "--virtual_server", type=mac_ip_parser, help="<Required> Virtual server address (e.g. 5E:FF:56:A2:AF:15/10.40.0.1)", required=True)
-parser.add_argument("-rs", "--real_server", type=mac_ip_parser, nargs=1, help="<Required> Real server address(es)  e.g. 5E:FF:56:A2:AF:15/10.40.0.1", required=True)
+parser.add_argument("-vs", "--virtual_server", type=ip_parser, help="<Required> Virtual server address (e.g. 10.40.0.1)", required=True)
+parser.add_argument("-rs", "--real_server", type=ip_parser, nargs=1, help="<Required> Real server address(es) (e.g. 10.40.0.1)", required=True)
 parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP port(s) to load balance", required=True)
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
                     help="Use to set bpf verbosity (0 is minimal)", default=0)
@@ -91,7 +77,7 @@ b.attach_xdp(ifnet, fn)
 # Set Configurations
 ## Virtual server config
 virtual_server_map = b.get_table("virtualServer")
-virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(virtual_server['mac']))
+virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server['ip'])
 ## Ports configs
 ports_map = b["ports"]
 for port in ports:
@@ -101,8 +87,8 @@ real_servers_array = b.get_table("realServersArray")
 real_servers_map = b.get_table("realServersMap")
 i = 0 
 for real_server in real_servers:
-    real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(real_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(real_server['mac']))
-    real_servers_map[real_servers_map.Key(real_server['ip'])] = real_servers_map.Leaf(real_server['ip'], (ct.c_ubyte * 6).from_buffer_copy(real_server['mac']))
+    real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(real_server['ip'])
+    real_servers_map[real_servers_map.Key(real_server['ip'])] = real_servers_map.Leaf(real_server['ip'])
     i+=1
 
 # Utility function to print udp dest NAT.
