@@ -122,7 +122,7 @@ class Data(ct.Structure):
 
 # Compile & attach bpf program
 print("\nCompiling & attaching bpf code ...")
-b = BPF(src_file ="ulb.c", debug=debug, cflags=["-w", "-DCTXTYPE=xdp_md"])
+b = BPF(src_file ="ulb.c", debug=debug, cflags=["-Wno-incompatible-pointer-types", "-Wno-compare-distinct-pointer-types"])
 fn = b.load_func("xdp_prog", BPF.XDP)
 b.attach_xdp(ifnet, fn)
 print("... compilation and attachement succeed.")
