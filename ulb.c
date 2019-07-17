@@ -141,7 +141,7 @@ static inline struct server * new_association(struct associationKey * k) {
     // create new association
     struct server newserver = {};
     newserver.ipAddr = rs->ipAddr;
-    associationTable.insert(k, &newserver);
+    associationTable.update(k, &newserver);
 
     return rs;
 }
