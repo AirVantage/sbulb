@@ -2,8 +2,9 @@
 An UDP load-balancer prototype using bcc (XDP/Bpf)
 
 ```
-usage: ulb.py [-h] -vs VIRTUAL_SERVER -rs REAL_SERVER -p PORT [PORT ...]
-              [-d {0,1,2,3,4}]
+usage: ulb.py [-h] -vs VIRTUAL_SERVER
+              (-rs REAL_SERVER [REAL_SERVER ...] | -cfg CONFIG_FILE) -p PORT
+              [PORT ...] [-d {0,1,2,3,4}]
               ifnet
 
 positional arguments:
@@ -13,8 +14,18 @@ optional arguments:
   -h, --help            show this help message and exit
   -vs VIRTUAL_SERVER, --virtual_server VIRTUAL_SERVER
                         <Required> Virtual server address (e.g. 10.40.0.1)
-  -rs REAL_SERVER, --real_server REAL_SERVER
+  -rs REAL_SERVER [REAL_SERVER ...], --real_server REAL_SERVER [REAL_SERVER ...]
                         <Required> Real server address(es) (e.g. 10.40.0.1)
+  -cfg CONFIG_FILE, --config_file CONFIG_FILE
+                        <Required> a path to a file containing real server address(es). 
+                        File will be polled each second for modification and configuration
+                        updated dynamically. A file content example :
+                        
+                        [Real Servers]
+                        10.0.0.4
+                        10.0.0.2
+                        10.0.0.6
+                        
   -p PORT [PORT ...], --port PORT [PORT ...]
                         <Required> UDP port(s) to load balance
   -d {0,1,2,3,4}, --debug {0,1,2,3,4}
