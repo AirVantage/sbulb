@@ -192,14 +192,7 @@ int xdp_prog(struct xdp_md *ctx) {
     udp = (struct udphdr *) (iph + 1);
     if ((void *) (udp + 1) > data_end)
         return XDP_DROP;
-    __u16 udp_len = bpf_ntohs(udp->len);
-    if (udp_len < 8)
-        return XDP_DROP;
-    if (udp_len > 512) // TODO use a more approriate max value
-        return XDP_DROP;
-    udp_len = udp_len & 0x1ff;
-    if ((void *) udp + udp_len > data_end)
-        return XDP_DROP;
+
     // Get virtual server
     int zero =  0;
     struct server * vs = virtualServer.lookup(&zero);
