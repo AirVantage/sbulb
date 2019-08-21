@@ -244,9 +244,6 @@ int xdp_prog(struct xdp_md *ctx) {
             new_addr = rs->ipAddr;
             iph->daddr = rs->ipAddr; // use real server IP address as destination
 
-            // TODO should we update id ? 
-            //iph->id = iph->id + 1;
-
             // TODO we should probably decrement ttl too
         }
     } else {
@@ -288,10 +285,6 @@ int xdp_prog(struct xdp_md *ctx) {
                 old_addr = iph->saddr;
                 new_addr = vs->ipAddr;
                 iph->saddr = vs->ipAddr; // use virtual server IP address as source
-
-
-                // TODO should we update id ? 
-                //iph->id = iph->id + 1 ;
 
                 // TODO we should probably decrement ttl too
             }
