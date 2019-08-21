@@ -11,6 +11,7 @@ import binascii
 import struct
 import re
 import os
+import signal
 
 # Utils
 def ip_strton(ip_address):
@@ -185,7 +186,7 @@ def dump_map():
 
 update_real_server([], real_servers)
 dump_map()
-print("... condig applied to bpf.")
+print("... config applied to bpf.")
 
 # started
 print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server['ip'])))
@@ -197,40 +198,56 @@ def print_event(cpu, data, size):
     event = ct.cast(data, ct.POINTER(Data)).contents
     print("source {} --> dest {} {}".format(ip_mac_tostr(event.smac, event.saddr),ip_mac_tostr(event.dmac, event.daddr), associationType_tostr(event.associationType)))
 
+# Handle Signal
+class Stopper:
+  _stop = False
+  def __init__(self):
+    signal.signal(signal.SIGTERM, self.stop)
+    signal.signal(signal.SIGINT, self.stop) # keyboard interruption
+
+  def stop(self,signum, frame):
+    print ("\nStopping by signal {}({})...".format(signal.Signals(signum).name, signum));  
+    self._stop = True
+
+  def isStopped(self):
+    return self._stop
+
 # Program loop
 try:
     b["events"].open_perf_buffer(print_event)
-    while 1:
-        try:
-            # read and log perf_buffer
-            b.perf_buffer_poll(1000)
-            # watch if config file changed
-            new_mtime = os.stat(config_file.name).st_mtime
-            if  new_mtime != config_file_mtime:
-                # load real server from config
-                new_real_servers = None
-                try:
-                    config_file_mtime = new_mtime
-                    with open(config_file.name) as f:
-                        new_real_servers = load_config(f)
-                except Exception as e:
-                    print ("Unable to load config {} file : {}".format(config_file.name, e))
-                    print ("Old Config is keeping : {}".format(servers_tostr(real_servers)))
+    stopper = Stopper()
+    while not stopper.isStopped():
+        # read and log perf_buffer
+        b.perf_buffer_poll(1000)
+        # watch if config file changed
+        new_mtime = os.stat(config_file.name).st_mtime
+        if  new_mtime != config_file_mtime:
+            # load real server from config
+            new_real_servers = None
+            try:
+                config_file_mtime = new_mtime
+                with open(config_file.name) as f:
+                    new_real_servers = load_config(f)
+            except Exception as e:
+                print ("Unable to load config {} file : {}".format(config_file.name, e))
+                print ("Old Config is keeping : {}".format(servers_tostr(real_servers)))
 
-                # if succeed try to update bpf map
-                if new_real_servers is not None:
-                    print("Apply new config ...")
-                    update_real_server(real_servers, new_real_servers)
-                    real_servers = new_real_servers
-                    dump_map()
-                    print("... new config applied.")
-            # DEBUG STUFF
-            #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
-            #while msg:
-            #    print("%s \n" % (msg))
-            #    (task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
-        except KeyboardInterrupt:
-            break;
+            # if succeed try to update bpf map
+            if new_real_servers is not None:
+                print("Apply new config ...")
+                update_real_server(real_servers, new_real_servers)
+                real_servers = new_real_servers
+                dump_map()
+                print("... new config applied.")
+        # DEBUG STUFF
+        #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
+        #while msg:
+        #    print("%s \n" % (msg))
+        #    (task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
 finally:
     # Detach bpf progam
+    print ("Detaching bpf code ...")
     b.remove_xdp(ifnet)
+    print ("... code detached.")
+    print ("... sbulb stopped.")
+
