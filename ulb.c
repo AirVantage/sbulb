@@ -153,7 +153,7 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/if_ether.h
     struct ethhdr * eth = data;
-    if (eth + 1 > data_end)
+    if ((void *) (eth + 1) > data_end)
         return XDP_DROP;
 
     // Handle only IP packets (v4?)
@@ -163,8 +163,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/ip.h
     struct iphdr *iph;
-    iph = eth + 1;
-    if (iph + 1 > data_end)
+    iph = (struct iphdr *) (eth + 1);
+    if ((void *) (iph + 1) > data_end)
         return XDP_DROP;
     // Minimum valid header length value is 5.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
@@ -189,8 +189,8 @@ int xdp_prog(struct xdp_md *ctx) {
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
     struct udphdr *udp;
     //udp = (void *) iph + iph->ihl * 4;
-    udp = iph + 1;
-    if (udp + 1 > data_end)
+    udp = (struct udphdr *) (iph + 1);
+    if ((void *) (udp + 1) > data_end)
         return XDP_DROP;
     __u16 udp_len = bpf_ntohs(udp->len);
     if (udp_len < 8)
