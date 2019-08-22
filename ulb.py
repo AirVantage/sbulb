@@ -39,19 +39,15 @@ def associationType_tostr(atype):
     else:
         return "UNKNOWN"
 
-def server_tostr(server):
-    return ip_ntostr(server["ip"])
-
-def servers_tostr(servers):
-    return ", ".join(map(server_tostr, servers))
+def ips_tostr(ips):
+    return ", ".join(map(ip_ntostr, ips))
 
 # Custom argument parser
 def ip_parser(s):
     try:
-        ip = ip_strton(s)
+        return ip_strton(s)
     except Exception as e:
         raise argparse.ArgumentTypeError("Invalid IP address '{}' : {}".format(s, str(e)))
-    return {"ip":ip}
 
 # Parse Arguments
 parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
@@ -76,11 +72,11 @@ args = parser.parse_args()
 
 # Get configuration from Arguments
 ifnet = args.ifnet                   # network interface to attach xdp program
-virtual_server = args.virtual_server # virtual server IP address
+virtual_server_ip = args.virtual_server # virtual server IP address
 ports = args.port                    # ports to load balance
 debug = args.debug                   # bpf verbosity
 
-real_servers = []                    # list of real server IP addresses
+real_server_ips = []                 # list of real server IP addresses
 config_file = args.config_file       # config file containing real server IP address list
 config_file_mtime = 0                # last modification time of config file
 
@@ -94,12 +90,12 @@ def load_config(cfgFile):
         rs.append(ip_parser(ip))
     if len(rs) == 0:
         raise ValueError ("real server list must not be empty")
-    print ("...real servers loaded : {}.".format(servers_tostr(rs)))
+    print ("...real servers loaded : {}.".format(ips_tostr(rs)))
     return rs
 
 if config_file is not None:
     try:
-        real_servers = load_config(config_file)
+        real_server_ips = load_config(config_file)
         config_file_mtime = os.fstat(config_file.fileno()).st_mtime
     except Exception as e:
         print ("Unable to parse {} file : {}".format(config_file.name, e));
@@ -107,7 +103,7 @@ if config_file is not None:
     finally:
         config_file.close()
 else:
-    real_servers = args.real_server      # list of real servers IP addresses
+    real_server_ips = args.real_server   # list of real servers IP addresses
 
 
 # Shared structure used for perf_buffer
@@ -132,7 +128,7 @@ print("... compilation and attachement succeed.")
 ## Virtual server config
 print("\nApplying config to bpf ...")
 virtual_server_map = b.get_table("virtualServer")
-virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server['ip'])
+virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server_ip)
 ## Ports configs
 ports_map = b["ports"]
 for port in ports:
@@ -141,40 +137,40 @@ for port in ports:
 real_servers_array = b.get_table("realServersArray")
 real_servers_map = b.get_table("realServersMap")
 
-def update_real_server(old_servers, new_servers):
+def update_real_server(old_server_ips, new_server_ips):
     """Update 'real server' bpf map content."""
-    nbOld = len(old_servers)
-    nbNew = len(new_servers)
+    nbOld = len(old_server_ips)
+    nbNew = len(new_server_ips)
     for i in range(max(nbOld, nbNew)):
         if i >= nbOld:
             #addition
-            new_server = new_servers[i]
-            real_servers_map[real_servers_map.Key(new_server['ip'])] = real_servers_map.Leaf(new_server['ip'])
-            real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server['ip'])
-            print("Add {} at index {}".format(server_tostr(new_server), i))
+            new_server_ip = new_server_ips[i]
+            real_servers_map[real_servers_map.Key(new_server_ip)] = real_servers_map.Leaf(new_server_ip)
+            real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server_ip)
+            print("Add {} at index {}".format(ip_ntostr(new_server_ip), i))
         elif i >= nbNew:
             #deletion
-            old_server = old_servers[i]
-            if old_server in new_servers:
-                print ("don't remove {} from map".format(server_tostr(old_server)))
+            old_server_ip = old_server_ips[i]
+            if old_server_ip in new_server_ips:
+                print ("don't remove {} from map".format(ip_ntostr(old_server_ip)))
             else:
-                del real_servers_map[real_servers_map.Key(old_server['ip'])]
+                del real_servers_map[real_servers_map.Key(old_server_ip)]
             del real_servers_array[real_servers_array.Key(i)]
-            print("delete {} at index {}".format(server_tostr(old_server), i))
+            print("delete {} at index {}".format(ip_ntostr(old_server_ip), i))
         else:
             #update
-            new_server = new_servers[i]
-            old_server = old_servers[i]
-            if new_server == old_server:
-                print ("No change for {} at index {}".format(server_tostr(new_server), i)) 
+            new_server_ip = new_server_ips[i]
+            old_server_ip = old_server_ips[i]
+            if new_server_ip == old_server_ip:
+                print ("No change for {} at index {}".format(ip_ntostr(new_server_ip), i)) 
             else:            
-                real_servers_map[real_servers_map.Key(new_server['ip'])] = real_servers_map.Leaf(new_server['ip'])
-                real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server['ip'])
-                if old_server in new_servers:
-                    print ("don't remove {} from map".format(server_tostr(old_server)))
+                real_servers_map[real_servers_map.Key(new_server_ip)] = real_servers_map.Leaf(new_server_ip)
+                real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server_ip)
+                if old_server_ip in new_server_ips:
+                    print ("don't remove {} from map".format(ip_ntostr(old_server_ip)))
                 else:
-                    del real_servers_map[real_servers_map.Key(old_server['ip'])]
-                print("Update {} to {} at index {}".format(server_tostr(old_server),server_tostr(new_server), i))
+                    del real_servers_map[real_servers_map.Key(old_server_ip)]
+                print("Update {} to {} at index {}".format(ip_ntostr(old_server_ip),ip_ntostr(new_server_ip), i))
            
 def dump_map():
     """Dump 'real servers' bpf map content."""
@@ -183,14 +179,14 @@ def dump_map():
     for i,v in real_servers_map.iteritems():
         print ("[{}]={}".format(ip_ntostr(i),ip_ntostr(v)))
 
-update_real_server([], real_servers)
+update_real_server([], real_server_ips)
 dump_map()
 print("... config applied to bpf.")
 
 # Started
-print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server['ip'])))
-for real_server in real_servers:
-    print ("VIP:{} <=======> Real Server:{}".format(server_tostr(virtual_server), server_tostr(real_server)))
+print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server_ip)))
+for real_server_ip in real_server_ips:
+    print ("VIP:{} <=======> Real Server:{}".format(ip_ntostr(virtual_server_ip), ip_ntostr(real_server_ip)))
 
 # Utility function to print udp NAT.
 def print_event(cpu, data, size):
@@ -222,20 +218,20 @@ try:
         new_mtime = os.stat(config_file.name).st_mtime
         if  new_mtime != config_file_mtime:
             # load real server from config
-            new_real_servers = None
+            new_real_server_ips = None
             try:
                 config_file_mtime = new_mtime
                 with open(config_file.name) as f:
-                    new_real_servers = load_config(f)
+                    new_real_server_ips = load_config(f)
             except Exception as e:
                 print ("Unable to load config {} file : {}".format(config_file.name, e))
-                print ("Old Config is keeping : {}".format(servers_tostr(real_servers)))
+                print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
 
             # if succeed try to update bpf map
-            if new_real_servers is not None:
+            if new_real_server_ips is not None:
                 print("Apply new config ...")
-                update_real_server(real_servers, new_real_servers)
-                real_servers = new_real_servers
+                update_real_server(real_server_ips, new_real_server_ips)
+                real_server_ips = new_real_server_ips
                 dump_map()
                 print("... new config applied.")
         # DEBUG STUFF
