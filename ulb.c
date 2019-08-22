@@ -263,8 +263,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 k.ipAddr = iph->daddr; 
                 k.port = udp->dest;
                 __be32 * currentRsIp = associationTable.lookup(&k);
-                if (currentRsIp == NULL) {
-                    // If there is no association create it
+                // Create association if no real server associated
+                // (or if real server associated does not exist anymore)
+                if (currentRsIp == NULL ||  realServersMap.lookup(currentRsIp) == NULL ) {
                     currentRsIp = new_association(&k);
                     if (currentRsIp == NULL)
                         return XDP_DROP; // XDP_ABORTED ?
