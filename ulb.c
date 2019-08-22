@@ -225,13 +225,14 @@ int xdp_prog(struct xdp_md *ctx) {
             // (or if real server associated does not exist anymore)
             if (rs == NULL || realServersMap.lookup(&rs->ipAddr) == NULL) {
                 rs = new_association(&k);
-                if (rs == NULL)
-                    return XDP_PASS; // XDP_ABORTED ?
+                if (rs == NULL) 
+                    return XDP_DROP; // XDP_ABORTED ?
                 associationType = 1;
             }
             // Should not happened, mainly needed to make verfier happy
-            if (rs == NULL)
-                return XDP_PASS; // XDP_ABORTED ?
+            if (rs == NULL) {
+                return XDP_DROP; // XDP_ABORTED ?
+            }
 
             // Update eth addr
             // Use virtual server MAC address (so packet destination) as source
@@ -274,7 +275,7 @@ int xdp_prog(struct xdp_md *ctx) {
                     // If there is no association create it
                     rs = new_association(&k);
                     if (rs == NULL)
-                        return XDP_PASS; // XDP_ABORTED ?
+                        return XDP_DROP; // XDP_ABORTED ?
                     associationType = 1;  
                 } else if (rs->ipAddr != egress_rs->ipAddr) {
                     // If there is an association
