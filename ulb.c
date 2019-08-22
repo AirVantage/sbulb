@@ -167,6 +167,9 @@ int xdp_prog(struct xdp_md *ctx) {
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
     if (iph->ihl < 5)
         return XDP_DROP;
+    // We only handle UDP traffic
+    if (iph->protocol != IPPROTO_UDP)
+        return XDP_PASS;
     // IP header size is variable because of options field.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
     //if ((void *) iph + iph->ihl * 4 > data_end)
@@ -178,10 +181,6 @@ int xdp_prog(struct xdp_md *ctx) {
     if (iph->frag_off & IP_FRAGMENTED) 
         return XDP_PASS; // TODO #17 should we support it ?
     // TODO #15 we should drop packet with ttl = 0
-
-    // We only handle UDP traffic
-    if (iph->protocol != IPPROTO_UDP)
-        return XDP_PASS;
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
     struct udphdr *udp;
