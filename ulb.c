@@ -12,11 +12,6 @@
 /* 0x3FFF mask to check for fragment offset field */
 #define IP_FRAGMENTED 65343
 
-// Real Server structure (IP address)
-struct server {
-    __be32 ipAddr; // TODO remove struct as now there is only 1 field
-};
-
 // keys for association table.
 struct associationKey {
     __be32 ipAddr; 
@@ -101,20 +96,20 @@ static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
     *csum = csum_fold_helper(*csum);
 }
 
-// A map which contains virtual server
-BPF_HASH(virtualServer, int, struct server, 1);
+// A map which contains virtual server IP address (__be32)
+BPF_HASH(virtualServer, int, __be32, 1);
 // A map which contains port to redirect
 BPF_HASH(ports, __be16, int, 10); // TODO #5 make the max number of port configurable.
-// maps which contains real server 
-BPF_HASH(realServersArray, int, struct server, 10); // TODO #5 make the max number of real server configurable.
-BPF_HASH(realServersMap, __be32, struct server, 10); // TODO #5 make the max number of real server configurable.
-// association tables (link a foreign peer to a real server)
-BPF_TABLE("lru_hash", struct associationKey, struct server, associationTable, 10000); // TODO #5 make the max number of association configurable.
+// maps which contains real server IP addresses (__be32)
+BPF_HASH(realServersArray, int, __be32, 10); // TODO #5 make the max number of real server configurable.
+BPF_HASH(realServersMap, __be32, __be32, 10); // TODO #5 make the max number of real server configurable.
+// association tables : link a foreign peer to a real server IP address (__be12)
+BPF_TABLE("lru_hash", struct associationKey, __be32, associationTable, 10000); // TODO #5 make the max number of association configurable.
 // load balancer state
 BPF_HASH(lbState, int, struct state, 1);
 
 __attribute__((__always_inline__))
-static inline struct server * new_association(struct associationKey * k) {
+static inline __be32 * new_association(struct associationKey * k) {
     // Get index of real server which must handle this peer
     int zero = 0;
     struct state * state = lbState.lookup(&zero);
@@ -123,11 +118,11 @@ static inline struct server * new_association(struct associationKey * k) {
         rsIndex = state->nextRS;
 
     // Get real server from this index.
-    struct server * rs = realServersArray.lookup(&rsIndex);
-    if (rs == NULL) {
+    __be32 * rsIp = realServersArray.lookup(&rsIndex);
+    if (rsIp == NULL) {
         rsIndex = 0; // probably index out of bound so we restart from 0
-        rs = realServersArray.lookup(&rsIndex);
-        if (rs == NULL)
+        rsIp = realServersArray.lookup(&rsIndex);
+        if (rsIp == NULL)
             return NULL; // XDP_ABORTED ?
     }
 
@@ -137,11 +132,9 @@ static inline struct server * new_association(struct associationKey * k) {
     lbState.update(&zero, &newState);
 
     // Create new association
-    struct server newserver = {};
-    newserver.ipAddr = rs->ipAddr;
-    associationTable.update(k, &newserver);
+    associationTable.update(k, rsIp);
 
-    return rs;
+    return rsIp;
 }
 
 int xdp_prog(struct xdp_md *ctx) {
@@ -192,8 +185,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // Get virtual server
     int zero =  0;
-    struct server * vs = virtualServer.lookup(&zero);
-    if (vs == NULL)
+    __be32 * vsIp = virtualServer.lookup(&zero);
+    if (vsIp == NULL)
         return XDP_PASS;
 
     // Just for log, to know if we create new association or not
@@ -201,7 +194,7 @@ int xdp_prog(struct xdp_md *ctx) {
     // Is it ingress traffic ? destination IP == VIP
     __be32 old_addr;
     __be32 new_addr;
-    if (iph->daddr == vs->ipAddr) {
+    if (iph->daddr == *vsIp) {
         // do not handle traffic on ports we don't want to redirect
         if (!ports.lookup(&(udp->dest))) {
             return XDP_PASS;
@@ -219,17 +212,17 @@ int xdp_prog(struct xdp_md *ctx) {
             struct associationKey k = {};
             k.ipAddr = iph->saddr; 
             k.port = udp->source;
-            struct server * rs = associationTable.lookup(&k);
+            __be32 * rsIp = associationTable.lookup(&k);
             // Create association if no real server associated
             // (or if real server associated does not exist anymore)
-            if (rs == NULL || realServersMap.lookup(&rs->ipAddr) == NULL) {
-                rs = new_association(&k);
-                if (rs == NULL) 
+            if (rsIp == NULL || realServersMap.lookup(rsIp) == NULL) {
+                rsIp = new_association(&k);
+                if (rsIp     == NULL) 
                     return XDP_DROP; // XDP_ABORTED ?
                 associationType = 1;
             }
             // Should not happened, mainly needed to make verfier happy
-            if (rs == NULL) {
+            if (rsIp == NULL) {
                 return XDP_DROP; // XDP_ABORTED ?
             }
 
@@ -243,15 +236,15 @@ int xdp_prog(struct xdp_md *ctx) {
 
             // Update IP address (DESTINATION NAT)
             old_addr = iph->daddr;
-            new_addr = rs->ipAddr;
-            iph->daddr = rs->ipAddr; // use real server IP address as destination
+            new_addr = *rsIp;
+            iph->daddr = *rsIp; // use real server IP address as destination
 
             // TODO #15 we should probably decrement ttl too
         }
     } else {
         // Is it egress traffic ? source ip == a real server IP
-        struct server * egress_rs = realServersMap.lookup(&iph->saddr);
-        if (egress_rs != NULL) {
+        __be32 * rsIp = realServersMap.lookup(&iph->saddr);
+        if (rsIp != NULL) {
             // do not handle traffic on ports we don't want to redirect
             if (!ports.lookup(&(udp->source))) {
                 return XDP_PASS;
@@ -269,14 +262,14 @@ int xdp_prog(struct xdp_md *ctx) {
                 struct associationKey k = {};
                 k.ipAddr = iph->daddr; 
                 k.port = udp->dest;
-                struct server * rs = associationTable.lookup(&k);
-                if (rs == NULL) {
+                __be32 * currentRsIp = associationTable.lookup(&k);
+                if (currentRsIp == NULL) {
                     // If there is no association create it
-                    rs = new_association(&k);
-                    if (rs == NULL)
+                    currentRsIp = new_association(&k);
+                    if (currentRsIp == NULL)
                         return XDP_DROP; // XDP_ABORTED ?
                     associationType = 1;  
-                } else if (rs->ipAddr != egress_rs->ipAddr) {
+                } else if (*currentRsIp != *rsIp) {
                     // If there is an association
                     // only associated server is allow to send packet
                     return XDP_DROP;
@@ -292,8 +285,8 @@ int xdp_prog(struct xdp_md *ctx) {
 
                 // Update IP address (SOURCE NAT)
                 old_addr = iph->saddr;
-                new_addr = vs->ipAddr;
-                iph->saddr = vs->ipAddr; // use virtual server IP address as source
+                new_addr = *vsIp;
+                iph->saddr = *vsIp; // use virtual server IP address as source
 
                 // TODO #15 we should probably decrement ttl too
             }

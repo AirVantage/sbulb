@@ -179,9 +179,9 @@ def update_real_server(old_servers, new_servers):
 def dump_map():
     """Dump 'real servers' bpf map content."""
     for i,v in real_servers_array.iteritems():
-        print ("[{}]={}".format(i.value,ip_ntostr(v.ipAddr)))
+        print ("[{}]={}".format(i.value,ip_ntostr(v)))
     for i,v in real_servers_map.iteritems():
-        print ("[{}]={}".format(ip_ntostr(i),ip_ntostr(v.ipAddr)))
+        print ("[{}]={}".format(ip_ntostr(i),ip_ntostr(v)))
 
 update_real_server([], real_servers)
 dump_map()
