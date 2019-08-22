@@ -15,7 +15,6 @@ import signal
 
 # Utils
 def ip_strton(ip_address):
-    # struct.unpack("I", socket.inet_aton(ip_address))[0]
     return socket.htonl((int) (ipaddress.ip_address(ip_address)))
 
 def ip_ntostr(ip_address):
@@ -77,12 +76,12 @@ args = parser.parse_args()
 
 # Get configuration from Arguments
 ifnet = args.ifnet                   # network interface to attach xdp program
-virtual_server = args.virtual_server # virtual server (ethernet and IP address)
+virtual_server = args.virtual_server # virtual server IP address
 ports = args.port                    # ports to load balance
 debug = args.debug                   # bpf verbosity
 
-real_servers = []                    # list of real servers
-config_file = args.config_file       # config file containing real servers list
+real_servers = []                    # list of real server IP addresses
+config_file = args.config_file       # config file containing real server IP address list
 config_file_mtime = 0                # last modification time of config file
 
 def load_config(cfgFile):
@@ -108,7 +107,7 @@ if config_file is not None:
     finally:
         config_file.close()
 else:
-    real_servers = args.real_server      # list of real servers (ethernet and IP address)
+    real_servers = args.real_server      # list of real servers IP addresses
 
 
 # Shared structure used for perf_buffer
@@ -188,7 +187,7 @@ update_real_server([], real_servers)
 dump_map()
 print("... config applied to bpf.")
 
-# started
+# Started
 print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server['ip'])))
 for real_server in real_servers:
     print ("VIP:{} <=======> Real Server:{}".format(server_tostr(virtual_server), server_tostr(real_server)))
