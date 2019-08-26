@@ -105,17 +105,6 @@ if config_file is not None:
 else:
     real_server_ips = args.real_server   # list of real servers IP addresses
 
-
-# Shared structure used for perf_buffer
-class Data(ct.Structure):
-    _fields_ = [
-        ("dmac", ct.c_ubyte * 6),   
-        ("smac", ct.c_ubyte * 6),
-        ("daddr", ct.c_uint),
-        ("saddr", ct.c_uint),
-        ("associationType", ct.c_uint)
-    ]
-
 # Compile & attach bpf program
 print("\nCompiling & attaching bpf code ...")
 b = BPF(src_file ="ulb.c", debug=debug)
@@ -188,10 +177,32 @@ print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".for
 for real_server_ip in real_server_ips:
     print ("VIP:{} <=======> Real Server:{}".format(ip_ntostr(virtual_server_ip), ip_ntostr(real_server_ip)))
 
-# Utility function to print udp NAT.
+# Shared structure used for "logs" perf_buffer
+class LogEvent(ct.Structure):
+    _fields_ = [
+	# code identied the kind of events
+        ("code", ct.c_uint),
+	# old/original packet addresses
+        ("odmac", ct.c_ubyte * 6),   
+        ("osmac", ct.c_ubyte * 6),
+        ("odaddr", ct.c_uint),
+        ("osaddr", ct.c_uint),
+	# new/modified packet addresses
+        ("ndmac", ct.c_ubyte * 6),   
+        ("nsmac", ct.c_ubyte * 6),
+        ("ndaddr", ct.c_uint),
+        ("nsaddr", ct.c_uint),
+    ]
+        
+# Utility function to print log
 def print_event(cpu, data, size):
-    event = ct.cast(data, ct.POINTER(Data)).contents
-    print("source {} --> dest {} {}".format(ip_mac_tostr(event.smac, event.saddr),ip_mac_tostr(event.dmac, event.daddr), associationType_tostr(event.associationType)))
+    event = ct.cast(data, ct.POINTER(LogEvent)).contents
+    print("source {} --> dest {} replaced by \nsource {} --> dest {} {}".format(
+        ip_mac_tostr(event.osmac, event.osaddr),
+        ip_mac_tostr(event.odmac, event.odaddr),
+        ip_mac_tostr(event.nsmac, event.nsaddr),
+        ip_mac_tostr(event.ndmac, event.ndaddr),
+        associationType_tostr(event.code)))
 
 # Handle Signal
 class Stopper:
@@ -209,7 +220,7 @@ class Stopper:
 
 # Program loop
 try:
-    b["events"].open_perf_buffer(print_event)
+    b["logs"].open_perf_buffer(print_event)
     stopper = Stopper()
     while not stopper.isStopped():
         # read and log perf_buffer

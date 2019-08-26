@@ -23,15 +23,22 @@ struct state {
     int nextRS; // new real server index
 };
 
-// packet structure to log load balancing
-struct packet {
-    unsigned char dmac[ETH_ALEN];
-    unsigned char smac[ETH_ALEN];
-    __be32 daddr;
-    __be32 saddr;
-    int associationType; // 0:not set,1:new association, 2:existing association
+// Log structure
+struct logEvent {
+    // code identifing the kind of events
+    int code;
+    // old/original packet addresses
+    unsigned char odmac[ETH_ALEN];
+    unsigned char osmac[ETH_ALEN];
+    __be32 odaddr;
+    __be32 osaddr;
+    // new/modified packet addresses
+    unsigned char ndmac[ETH_ALEN];
+    unsigned char nsmac[ETH_ALEN];
+    __be32 ndaddr;
+    __be32 nsaddr;    
 };
-BPF_PERF_OUTPUT(events);
+BPF_PERF_OUTPUT(logs);
 
 __attribute__((__always_inline__))
 static inline __u16 csum_fold_helper(__u64 csum) {
@@ -139,9 +146,10 @@ static inline __be32 * new_association(struct associationKey * k) {
 
 int xdp_prog(struct xdp_md *ctx) {
 
-    void *data_end = (void *)(long)ctx->data_end;
-    void *data = (void *)(long)ctx->data;
-
+    void *data = (void *)(long)ctx->data;         // begin of the packet
+    void *data_end = (void *)(long)ctx->data_end; // end of the packet
+    struct logEvent logEvent = {};                // stucture used to log
+    
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/if_ether.h
     struct ethhdr * eth = data;
     if ((void *) (eth + 1) > data_end)
@@ -156,6 +164,13 @@ int xdp_prog(struct xdp_md *ctx) {
     iph = (struct iphdr *) (eth + 1);
     if ((void *) (iph + 1) > data_end)
         return XDP_DROP;
+    
+    // Store packet addresses for logging
+    memcpy(&logEvent.odmac, eth->h_dest, ETH_ALEN);
+    memcpy(&logEvent.osmac, eth->h_source, ETH_ALEN);
+    logEvent.odaddr = iph->daddr;
+    logEvent.osaddr = iph->saddr;
+
     // Minimum valid header length value is 5.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
     if (iph->ihl < 5)
@@ -189,24 +204,17 @@ int xdp_prog(struct xdp_md *ctx) {
     if (vsIp == NULL)
         return XDP_PASS;
 
-    // Just for log, to know if we create new association or not
-    int associationType = 2;  // 0:not set,1:new association, 2:existing association
-    // Is it ingress traffic ? destination IP == VIP
+    // Store ip address modification for checksum incremental update
     __be32 old_addr;
     __be32 new_addr;
+    int associationType = 2; // 0:not set,1:new association, 2:existing association
+
+    // Is it ingress traffic ? destination IP == VIP
     if (iph->daddr == *vsIp) {
         // do not handle traffic on ports we don't want to redirect
         if (!ports.lookup(&(udp->dest))) {
             return XDP_PASS;
         } else {
-            // Log packet before
-            struct packet pkt = {};
-            memcpy(&pkt, data, sizeof(pkt)); // crappy
-            pkt.daddr = iph->daddr;  
-            pkt.saddr = iph->saddr;
-            pkt.associationType = 0;
-            events.perf_submit(ctx,&pkt,sizeof(pkt));
-
             // Handle ingress traffic
             // Find real server associated
             struct associationKey k = {};
@@ -226,13 +234,15 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_DROP; // XDP_ABORTED ?
             }
 
-            // Update eth addr
+            // Eth address swapping
+            unsigned char dmac[ETH_ALEN];
+            memcpy(eth->h_dest, dmac, ETH_ALEN);             
             // Use virtual server MAC address (so packet destination) as source
-            memcpy(eth->h_source, pkt.dmac, 6); 
+            memcpy(eth->h_source, eth->h_dest, ETH_ALEN); 
             // Use source ethernet address as destination,
             // as we supose all ethernet traffic goes through this gateway.
             // (currently we support use case with only 1 ethernet gateway)
-            memcpy(eth->h_dest, pkt.smac, 6); 
+            memcpy(eth->h_source, dmac, ETH_ALEN);
 
             // Update IP address (DESTINATION NAT)
             old_addr = iph->daddr;
@@ -249,14 +259,6 @@ int xdp_prog(struct xdp_md *ctx) {
             if (!ports.lookup(&(udp->source))) {
                 return XDP_PASS;
             } else {
-                // Log packet before
-                struct packet pkt = {};
-                memcpy(&pkt, data, sizeof(pkt)); // crappy
-                pkt.daddr = iph->daddr;  
-                pkt.saddr = iph->saddr;
-                pkt.associationType = 0;
-                events.perf_submit(ctx,&pkt,sizeof(pkt));
-
                 // Handle egress traffic
                 // Find real server associated to this foreign peer
                 struct associationKey k = {};
@@ -276,13 +278,15 @@ int xdp_prog(struct xdp_md *ctx) {
                     return XDP_DROP;
                 }
                 
-                // Update eth addr
+                // Eth address swapping
+                unsigned char dmac[ETH_ALEN];
+                memcpy(eth->h_dest, dmac, ETH_ALEN);       
                 // Use virtual server MAC address (so packet destination) as source
-                memcpy(eth->h_source, pkt.dmac, 6);
+                memcpy(eth->h_source, eth->h_dest, ETH_ALEN); 
                 // Use source ethernet address as destination,
                 // as we supose all ethernet traffic goes through this gateway.
                 // (currently we support use case with only 1 ethernet gateway)
-                memcpy(eth->h_dest, pkt.smac, 6);
+                memcpy(eth->h_source, dmac, ETH_ALEN);
 
                 // Update IP address (SOURCE NAT)
                 old_addr = iph->saddr;
@@ -309,13 +313,14 @@ int xdp_prog(struct xdp_md *ctx) {
     update_csum(&cs , old_addr, new_addr);
     udp->check = cs;
 
-    // Log packet after
-    struct packet pkt = {};
-    memcpy(&pkt, data, sizeof(pkt)); // crappy
-    pkt.daddr = iph->daddr;
-    pkt.saddr = iph->saddr;
-    pkt.associationType = associationType;
-    events.perf_submit(ctx,&pkt,sizeof(pkt));
+    // Log address translation
+    // Store new addresses
+    memcpy(&logEvent.ndmac, eth->h_dest, ETH_ALEN);
+    memcpy(&logEvent.nsmac, eth->h_source, ETH_ALEN);
+    logEvent.ndaddr = iph->daddr;
+    logEvent.nsaddr = iph->saddr;
+    logEvent.code = associationType; // we temporarily use associationType as code
+    logs.perf_submit(ctx, &logEvent, sizeof(logEvent));
 
     return XDP_TX;
 }
