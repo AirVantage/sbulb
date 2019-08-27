@@ -40,6 +40,7 @@ struct logEvent {
 };
 BPF_PERF_OUTPUT(logs);
 
+// Checksum utilities
 __attribute__((__always_inline__))
 static inline __u16 csum_fold_helper(__u64 csum) {
   int i;
@@ -207,7 +208,6 @@ int xdp_prog(struct xdp_md *ctx) {
     // Store ip address modification for checksum incremental update
     __be32 old_addr;
     __be32 new_addr;
-    int associationType = 2; // 0:not set,1:new association, 2:existing association
 
     // Is it ingress traffic ? destination IP == VIP
     if (iph->daddr == *vsIp) {
@@ -227,7 +227,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 rsIp = new_association(&k);
                 if (rsIp     == NULL) 
                     return XDP_DROP; // XDP_ABORTED ?
-                associationType = 1;
+                logEvent.code = NEW_NAT;
+            } else {
+                logEvent.code = REUSED_NAT;
             }
             // Should not happened, mainly needed to make verfier happy
             if (rsIp == NULL) {
@@ -271,11 +273,13 @@ int xdp_prog(struct xdp_md *ctx) {
                     currentRsIp = new_association(&k);
                     if (currentRsIp == NULL)
                         return XDP_DROP; // XDP_ABORTED ?
-                    associationType = 1;  
+                    logEvent.code = NEW_NAT;
                 } else if (*currentRsIp != *rsIp) {
                     // If there is an association
                     // only associated server is allow to send packet
                     return XDP_DROP;
+                } else {
+                    logEvent.code = REUSED_NAT;
                 }
                 
                 // Eth address swapping
@@ -319,7 +323,6 @@ int xdp_prog(struct xdp_md *ctx) {
     memcpy(&logEvent.nsmac, eth->h_source, ETH_ALEN);
     logEvent.ndaddr = iph->daddr;
     logEvent.nsaddr = iph->saddr;
-    logEvent.code = associationType; // we temporarily use associationType as code
     logs.perf_submit(ctx, &logEvent, sizeof(logEvent));
 
     return XDP_TX;

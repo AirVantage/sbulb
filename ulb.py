@@ -12,6 +12,7 @@ import struct
 import re
 import os
 import signal
+from enum import Enum
 
 # Utils
 def ip_strton(ip_address):
@@ -28,16 +29,6 @@ def mac_btostr(mac_address):
 
 def ip_mac_tostr(mac_address, ip_address):
     return "{}/{}".format(mac_btostr(mac_address),ip_ntostr(ip_address))
-
-def associationType_tostr(atype):
-    if atype == 0:
-        return "replaced by"
-    elif atype == 1:
-        return "(NEW ASSOCIATION)"
-    elif atype == 2:
-        return "(REUSED ASSOCIATION)"
-    else:
-        return "UNKNOWN"
 
 def ips_tostr(ips):
     return ", ".join(map(ip_ntostr, ips))
@@ -105,9 +96,35 @@ if config_file is not None:
 else:
     real_server_ips = args.real_server   # list of real servers IP addresses
 
+# Define log code constant
+class LogCode(Enum):
+    NEW_NAT = 1, "source {} --> dest {} replaced by \nsource {} --> dest {} (NEW ASSOCIATION)"
+    REUSED_NAT = 2, "source {} --> dest {} replaced by \nsource {} --> dest {} (REUSED ASSOCIATION)"
+
+    def __new__(cls, value, msg):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.msg = msg
+        return obj
+
+    def log(self, event):
+        """Print log message."""
+        print(self.msg.format(
+        ip_mac_tostr(event.osmac, event.osaddr),
+        ip_mac_tostr(event.odmac, event.odaddr),
+        ip_mac_tostr(event.nsmac, event.nsaddr),
+        ip_mac_tostr(event.ndmac, event.ndaddr)))
+
+    def toMacros():
+        """Export all logCode as C macro list."""
+        macros = []
+        for code in LogCode:
+            macros.append("-D{}={}".format(code.name, code.value))
+        return macros
+
 # Compile & attach bpf program
 print("\nCompiling & attaching bpf code ...")
-b = BPF(src_file ="ulb.c", debug=debug)
+b = BPF(src_file ="ulb.c", debug=debug, cflags=LogCode.toMacros())
 fn = b.load_func("xdp_prog", BPF.XDP)
 b.attach_xdp(ifnet, fn)
 print("... compilation and attachement succeed.")
@@ -197,12 +214,7 @@ class LogEvent(ct.Structure):
 # Utility function to print log
 def print_event(cpu, data, size):
     event = ct.cast(data, ct.POINTER(LogEvent)).contents
-    print("source {} --> dest {} replaced by \nsource {} --> dest {} {}".format(
-        ip_mac_tostr(event.osmac, event.osaddr),
-        ip_mac_tostr(event.odmac, event.odaddr),
-        ip_mac_tostr(event.nsmac, event.nsaddr),
-        ip_mac_tostr(event.ndmac, event.ndaddr),
-        associationType_tostr(event.code)))
+    LogCode(event.code).log(event)
 
 # Handle Signal
 class Stopper:
