@@ -97,24 +97,92 @@ else:
     real_server_ips = args.real_server   # list of real servers IP addresses
 
 # Define log code constant
+class Direction(Enum):
+    INGRESS = 1,
+    EGRESS = 2,
+    UNKNOWN = 3,
+class Kind(Enum):
+    NOTIP = 1,
+    UNCHANGED = 2,
+    NAT = 3,
 class LogCode(Enum):
-    NEW_NAT = 1, "source {} --> dest {} replaced by \nsource {} --> dest {} (NEW ASSOCIATION)"
-    REUSED_NAT = 2, "source {} --> dest {} replaced by \nsource {} --> dest {} (REUSED ASSOCIATION)"
+    # NOT IP (message with out address) 
+    INVALID_ETH_SIZE            = "{} <-> {} Invalid size for ethernet packet", Direction.UNKNOWN, Kind.NOTIP
+    NOT_IP_V4                   = "{} <-> {} Not IPv4 packet", Direction.UNKNOWN, Kind.NOTIP
 
-    def __new__(cls, value, msg):
+    # UNCHANGED (message with origin address only)
+    INVALID_IP_SIZE             = "{} <─> {} Invalid size for IP packet", Direction.UNKNOWN, Kind.UNCHANGED
+    TOO_SMALL_IP_HEADER         = "{} <─> {} Too small IP header", Direction.UNKNOWN, Kind.UNCHANGED
+    NOT_UDP                     = "{} <─> {} Not UDP packet", Direction.UNKNOWN, Kind.UNCHANGED
+    TOO_BIG_IP_HEADER           = "{} <─> {} Too big IP header", Direction.UNKNOWN, Kind.UNCHANGED
+    FRAGMENTED_IP_PACKET        = "{} <─> {} Fragmented IP packet", Direction.UNKNOWN, Kind.UNCHANGED
+    INVALID_UDP_SIZE            = "{} <─> {} Invalid size for UDP packet", Direction.UNKNOWN, Kind.UNCHANGED
+    NO_VIRTUAL_SERVER           = "{} <─> {} No virtual server configured", Direction.UNKNOWN, Kind.UNCHANGED
+    UNHANDLED_TRAFFIC           = "{} <─> {} Unhandled traffic", Direction.UNKNOWN, Kind.UNCHANGED
+    
+    INGRESS_NOT_HANDLED_PORT    = "{} ──> {} Unhandled port", Direction.INGRESS, Kind.UNCHANGED
+    INGRESS_CANNOT_CREATE_ASSO  = "{} ──> {} Unable to create association", Direction.INGRESS, Kind.UNCHANGED
+    INGRESS_CANNOT_CREATE_ASSO2 = "{} ──> {} Unable to create association (MUST not happened", Direction.INGRESS, Kind.UNCHANGED
+
+    EGRESS_NOT_HANDLED_PORT     = "{} <── {} Unhandled port", Direction.EGRESS, Kind.UNCHANGED
+    EGRESS_CANNOT_CREATE_ASSO   = "{} <── {} Unable to create association", Direction.EGRESS, Kind.UNCHANGED
+    EGRESS_NOT_AUTHORIZED       = "{} <── {} Not associated real server", Direction.EGRESS, Kind.UNCHANGED
+
+    # NAT (message with origin an destination addresses)
+    INGRESS_NEW_NAT             = "{} ─┐  {} Destination NAT\n{}  └> {} (NEW ASSOCIATION)", Direction.INGRESS, Kind.NAT
+    INGRESS_REUSED_NAT          = "{} ─┐  {} Destination NAT\n{}  └> {} (REUSED ASSOCIATION)", Direction.INGRESS, Kind.NAT
+
+    EGRESS_NEW_NAT              = "{}   ┌ {} Source NAT\n{} <─┘ {} (NEW ASSOCIATION)", Direction.EGRESS, Kind.NAT
+    EGRESS_REUSED_NAT           = "{}   ┌ {} Source NAT\n{} <─┘ {} (REUSED ASSOCIATION)", Direction.EGRESS, Kind.NAT
+
+    def __new__(cls, msg, direction, kind):
+        value = len(cls.__members__) + 1
         obj = object.__new__(cls)
         obj._value_ = value
         obj.msg = msg
+        obj.direction = direction
+        obj.kind = kind
         return obj
 
     def log(self, event):
         """Print log message."""
-        print(self.msg.format(
-        ip_mac_tostr(event.osmac, event.osaddr),
-        ip_mac_tostr(event.odmac, event.odaddr),
-        ip_mac_tostr(event.nsmac, event.nsaddr),
-        ip_mac_tostr(event.ndmac, event.ndaddr)))
-
+        mac_ip_str_size = 33
+        if self.kind is Kind.NAT:
+            if self.direction is Direction.INGRESS:
+                print(self.msg.format(
+                    ip_mac_tostr(event.osmac, event.osaddr).rjust(mac_ip_str_size),
+                    ip_mac_tostr(event.odmac, event.odaddr).ljust(mac_ip_str_size),
+                    " "*mac_ip_str_size,
+                    ip_mac_tostr(event.ndmac, event.ndaddr).ljust(mac_ip_str_size)))
+            elif self.direction is Direction.EGRESS:
+                print(self.msg.format(
+                    " "*mac_ip_str_size,
+                    ip_mac_tostr(event.osmac, event.osaddr).ljust(mac_ip_str_size),
+                    ip_mac_tostr(event.ndmac, event.ndaddr).rjust(mac_ip_str_size),
+                    ip_mac_tostr(event.nsmac, event.nsaddr).ljust(mac_ip_str_size)))
+            else:
+                print("Invalid direction for NAT log event:{}".format(self.direction))
+        elif self.kind is Kind.UNCHANGED:
+            if self.direction is Direction.INGRESS or self.direction is Direction.UNKNOWN :
+                print(self.msg.format(
+                     ip_mac_tostr(event.osmac, event.osaddr).rjust(mac_ip_str_size),
+                     ip_mac_tostr(event.odmac, event.odaddr).ljust(mac_ip_str_size)))
+            elif self.direction is Direction.EGRESS:
+                print(self.msg.format(
+                     ip_mac_tostr(event.odmac, event.odaddr).rjust(mac_ip_str_size),
+                     ip_mac_tostr(event.osmac, event.osaddr).ljust(mac_ip_str_size)))
+            else:
+                print("Invalid direction of UNCHANGED log event : {}".format(self.direction))            
+        elif self.kind is Kind.NOTIP:
+            if self.direction is Direction.UNKNOWN:
+                print(self.msg.format(
+                    " "*mac_ip_str_size,
+                    " "*mac_ip_str_size))
+            else:
+                print("Invalid direction of NOT IP log event : {}".format(self.direction))            
+        else:
+            print("Invalid kind of log event : {}".format(self.kind))
+            
     def toMacros():
         """Export all logCode as C macro list."""
         macros = []

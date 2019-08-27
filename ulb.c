@@ -39,6 +39,12 @@ struct logEvent {
     __be32 nsaddr;    
 };
 BPF_PERF_OUTPUT(logs);
+// Logging function
+__attribute__((__always_inline__))
+static inline void log(struct xdp_md *ctx, unsigned char code, struct logEvent * logEvent) {
+    logEvent->code = code;
+    logs.perf_submit(ctx, logEvent, sizeof(*logEvent));
+}
 
 // Checksum utilities
 __attribute__((__always_inline__))
@@ -153,18 +159,24 @@ int xdp_prog(struct xdp_md *ctx) {
     
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/if_ether.h
     struct ethhdr * eth = data;
-    if ((void *) (eth + 1) > data_end)
+    if ((void *) (eth + 1) > data_end) {
+        log(ctx, INVALID_ETH_SIZE, &logEvent);
         return XDP_DROP;
+    }
 
     // Handle only IPv4 packets
-    if (eth->h_proto != bpf_htons(ETH_P_IP))
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) {
+        log(ctx, NOT_IP_V4, &logEvent);
         return XDP_PASS;
+    }
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/ip.h
     struct iphdr *iph;
     iph = (struct iphdr *) (eth + 1);
-    if ((void *) (iph + 1) > data_end)
+    if ((void *) (iph + 1) > data_end) {
+        log(ctx, INVALID_IP_SIZE, &logEvent);
         return XDP_DROP;
+    }
     
     // Store packet addresses for logging
     memcpy(&logEvent.odmac, eth->h_dest, ETH_ALEN);
@@ -174,21 +186,29 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // Minimum valid header length value is 5.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
-    if (iph->ihl < 5)
+    if (iph->ihl < 5) {
+        log(ctx, TOO_SMALL_IP_HEADER, &logEvent);
         return XDP_DROP;
+    }
     // We only handle UDP traffic
-    if (iph->protocol != IPPROTO_UDP)
+    if (iph->protocol != IPPROTO_UDP) {
+        log(ctx, NOT_UDP, &logEvent);
         return XDP_PASS;
+    }
     // IP header size is variable because of options field.
     // see (https://tools.ietf.org/html/rfc791#section-3.1)
     //if ((void *) iph + iph->ihl * 4 > data_end)
     //    return XDP_DROP;
     // TODO #16 support IP header with variable size
-    if (iph->ihl != 5) 
+    if (iph->ihl != 5) {
+        log(ctx, TOO_BIG_IP_HEADER, &logEvent);
         return XDP_PASS;
+    }
     // Do not support fragmented packets
-    if (iph->frag_off & IP_FRAGMENTED) 
+    if (iph->frag_off & IP_FRAGMENTED) {
+        log(ctx, FRAGMENTED_IP_PACKET, &logEvent);
         return XDP_PASS; // TODO #17 should we support it ?
+    }
     // TODO #15 we should drop packet with ttl = 0
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
@@ -196,14 +216,18 @@ int xdp_prog(struct xdp_md *ctx) {
     // TODO #16 support IP header with variable size
     //udp = (void *) iph + iph->ihl * 4;
     udp = (struct udphdr *) (iph + 1);
-    if ((void *) (udp + 1) > data_end)
+    if ((void *) (udp + 1) > data_end) {
+        log(ctx, INVALID_UDP_SIZE, &logEvent);
         return XDP_DROP;
+    }
 
     // Get virtual server
     int zero =  0;
     __be32 * vsIp = virtualServer.lookup(&zero);
-    if (vsIp == NULL)
+    if (vsIp == NULL) {
+        log(ctx, NO_VIRTUAL_SERVER, &logEvent);
         return XDP_PASS;
+    }
 
     // Store ip address modification for checksum incremental update
     __be32 old_addr;
@@ -213,6 +237,7 @@ int xdp_prog(struct xdp_md *ctx) {
     if (iph->daddr == *vsIp) {
         // do not handle traffic on ports we don't want to redirect
         if (!ports.lookup(&(udp->dest))) {
+            log(ctx, INGRESS_NOT_HANDLED_PORT, &logEvent);
             return XDP_PASS;
         } else {
             // Handle ingress traffic
@@ -225,14 +250,17 @@ int xdp_prog(struct xdp_md *ctx) {
             // (or if real server associated does not exist anymore)
             if (rsIp == NULL || realServersMap.lookup(rsIp) == NULL) {
                 rsIp = new_association(&k);
-                if (rsIp     == NULL) 
+                if (rsIp == NULL) {
+                    log(ctx, INGRESS_CANNOT_CREATE_ASSO, &logEvent);
                     return XDP_DROP; // XDP_ABORTED ?
-                logEvent.code = NEW_NAT;
+                }
+                logEvent.code = INGRESS_NEW_NAT;
             } else {
-                logEvent.code = REUSED_NAT;
+                logEvent.code = INGRESS_REUSED_NAT;
             }
             // Should not happened, mainly needed to make verfier happy
             if (rsIp == NULL) {
+                log(ctx, INGRESS_CANNOT_CREATE_ASSO2, &logEvent);
                 return XDP_DROP; // XDP_ABORTED ?
             }
 
@@ -259,6 +287,7 @@ int xdp_prog(struct xdp_md *ctx) {
         if (rsIp != NULL) {
             // do not handle traffic on ports we don't want to redirect
             if (!ports.lookup(&(udp->source))) {
+                log(ctx, EGRESS_NOT_HANDLED_PORT, &logEvent);
                 return XDP_PASS;
             } else {
                 // Handle egress traffic
@@ -271,15 +300,18 @@ int xdp_prog(struct xdp_md *ctx) {
                 // (or if real server associated does not exist anymore)
                 if (currentRsIp == NULL ||  realServersMap.lookup(currentRsIp) == NULL ) {
                     currentRsIp = new_association(&k);
-                    if (currentRsIp == NULL)
+                    if (currentRsIp == NULL) {
+                        log(ctx, EGRESS_CANNOT_CREATE_ASSO, &logEvent);
                         return XDP_DROP; // XDP_ABORTED ?
-                    logEvent.code = NEW_NAT;
+                    }
+                    logEvent.code = EGRESS_NEW_NAT;
                 } else if (*currentRsIp != *rsIp) {
                     // If there is an association
                     // only associated server is allow to send packet
+                    log(ctx, EGRESS_NOT_AUTHORIZED, &logEvent);
                     return XDP_DROP;
                 } else {
-                    logEvent.code = REUSED_NAT;
+                    logEvent.code = EGRESS_REUSED_NAT;
                 }
                 
                 // Eth address swapping
@@ -300,6 +332,8 @@ int xdp_prog(struct xdp_md *ctx) {
                 // TODO #15 we should probably decrement ttl too
             }
         } else {
+            // neither ingress(destIP=VirtualServerIP) nor egress(sourceIP=RealServerIP) traffic
+            log(ctx, UNHANDLED_TRAFFIC,&logEvent);
             return XDP_PASS;
         }
     }
