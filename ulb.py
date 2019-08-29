@@ -13,6 +13,11 @@ import re
 import os
 import signal
 from enum import Enum
+import logging
+
+# Define pythons log level
+logLevelNames = ["CRITICAL","ERROR","WARNING","INFO","DEBUG","TRACE"]
+logging.addLevelName(5, "TRACE") # add TRACE level
 
 # Utils
 def ip_strton(ip_address):
@@ -59,6 +64,7 @@ updated dynamically. A file content example :
 parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP port(s) to load balance", required=True)
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
                     help="Use to set bpf verbosity (0 is minimal)", default=0)
+parser.add_argument("-l", "--loglevel", choices=logLevelNames, help="Use to set logging verbosity.", default="ERROR")
 args = parser.parse_args()
 
 # Get configuration from Arguments
@@ -66,6 +72,7 @@ ifnet = args.ifnet                   # network interface to attach xdp program
 virtual_server_ip = args.virtual_server # virtual server IP address
 ports = args.port                    # ports to load balance
 debug = args.debug                   # bpf verbosity
+loglevel = args.loglevel             # log level to used
 
 real_server_ips = []                 # list of real server IP addresses
 config_file = args.config_file       # config file containing real server IP address list
@@ -189,10 +196,15 @@ class LogCode(Enum):
         for code in LogCode:
             macros.append("-D{}={}".format(code.name, code.value))
         return macros
+# Build C flags
+cflags = LogCode.toMacros()
+for levelName in logLevelNames:
+    cflags.append("-D{}={}".format(levelName, logging.getLevelName(levelName)))
+cflags.append("-D{}={}".format("LOGLEVEL", loglevel))
 
 # Compile & attach bpf program
 print("\nCompiling & attaching bpf code ...")
-b = BPF(src_file ="ulb.c", debug=debug, cflags=LogCode.toMacros())
+b = BPF(src_file ="ulb.c", debug=debug, cflags=cflags)
 fn = b.load_func("xdp_prog", BPF.XDP)
 b.attach_xdp(ifnet, fn)
 print("... compilation and attachement succeed.")
