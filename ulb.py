@@ -270,10 +270,16 @@ dump_map()
 print("... config applied to bpf.")
 
 # Started
-print("\nLoad balancing UDP traffic over {} interface for port(s) {} from :".format(ifnet, ports, ip_ntostr(virtual_server_ip)))
-for real_server_ip in real_server_ips:
-    print ("VIP:{} <=======> Real Server:{}".format(ip_ntostr(virtual_server_ip), ip_ntostr(real_server_ip)))
-
+print("\nLoad balancing UDP traffic over {} interface for port(s) {} :".format(ifnet, ports, ip_ntostr(virtual_server_ip)))
+ip_str_size = 15
+print("{}           {}".format("Virtual Server".rjust(ip_str_size),"Real Server(s)".ljust(ip_str_size)))
+if len(real_server_ips) == 1:
+    print ("{} <───────> {}\n".format(ip_ntostr(virtual_server_ip).rjust(ip_str_size), ip_ntostr(real_server_ips[0]).ljust(ip_str_size)))
+elif len(real_server_ips) > 1:
+    print ("{} <───┬───> {}".format(ip_ntostr(virtual_server_ip).rjust(ip_str_size), ip_ntostr(real_server_ips[0]).ljust(ip_str_size)))
+    for n in range(1,len(real_server_ips)-1):    
+        print ("{}     ├───> {}".format(" " * ip_str_size, ip_ntostr(real_server_ips[n]).ljust(ip_str_size)))
+    print ("{}     └───> {}\n".format(" " * ip_str_size, ip_ntostr(real_server_ips[-1]).ljust(ip_str_size)))
 # Shared structure used for "logs" perf_buffer
 class LogEvent(ct.Structure):
     _fields_ = [
