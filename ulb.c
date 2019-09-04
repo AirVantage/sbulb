@@ -115,12 +115,12 @@ static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
 // A map which contains virtual server IP address (__be32)
 BPF_HASH(virtualServer, int, __be32, 1);
 // A map which contains port to redirect
-BPF_HASH(ports, __be16, int, 10); // TODO #5 make the max number of port configurable.
+BPF_HASH(ports, __be16, int, MAX_PORTS);
 // maps which contains real server IP addresses (__be32)
-BPF_HASH(realServersArray, int, __be32, 10); // TODO #5 make the max number of real server configurable.
-BPF_HASH(realServersMap, __be32, __be32, 10); // TODO #5 make the max number of real server configurable.
+BPF_HASH(realServersArray, int, __be32, MAX_REALSERVERS);
+BPF_HASH(realServersMap, __be32, __be32, MAX_REALSERVERS);
 // association tables : link a foreign peer to a real server IP address (__be12)
-BPF_TABLE("lru_hash", struct associationKey, __be32, associationTable, 10000); // TODO #5 make the max number of association configurable.
+BPF_TABLE("lru_hash", struct associationKey, __be32, associationTable, MAX_ASSOCIATIONS);
 // load balancer state
 BPF_HASH(lbState, int, struct state, 1);
 

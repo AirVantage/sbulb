@@ -5,6 +5,8 @@ An UDP load-balancer prototype using bcc (XDP/Bpf)
 usage: ulb.py [-h] -vs VIRTUAL_SERVER
               (-rs REAL_SERVER [REAL_SERVER ...] | -cfg CONFIG_FILE) -p PORT
               [PORT ...] [-d {0,1,2,3,4}]
+              [-l {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}] [-mp MAX_PORTS]
+              [-mrs MAX_REALSERVERS] [-ma MAX_ASSOCIATIONS]
               ifnet
 
 positional arguments:
@@ -30,6 +32,15 @@ optional arguments:
                         <Required> UDP port(s) to load balance
   -d {0,1,2,3,4}, --debug {0,1,2,3,4}
                         Use to set bpf verbosity (0 is minimal)
+  -l {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}, --loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}
+                        Use to set logging verbosity.
+  -mp MAX_PORTS, --max_ports MAX_PORTS
+                        Set the maximum number of port to load balance.
+  -mrs MAX_REALSERVERS, --max_realservers MAX_REALSERVERS
+                        Set the maximum number of real servers.
+  -ma MAX_ASSOCIATIONS, --max_associations MAX_ASSOCIATIONS
+                        Set the maximum number of associations,
+                        meaning the number of foreign peer to support at the same time.
 ```
 Eg : `sudo python3 ulb.py eth0 -vs 10.188.7.99 -rs 10.188.100.163 10.188.100.230  -p 5683 5684
 `

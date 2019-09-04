@@ -45,6 +45,23 @@ def ip_parser(s):
     except Exception as e:
         raise argparse.ArgumentTypeError("Invalid IP address '{}' : {}".format(s, str(e)))
 
+def positive_int(s):
+    if not s.isdigit():
+        raise argparse.ArgumentTypeError("{} is not a valid positive int".format(s))
+    try:
+        i = int(s)
+    except Exception as e:
+        raise argparse.ArgumentTypeError("{} is not a valid positive int : {}".format(s,str(e)))
+    if i < 0:
+        raise argparse.ArgumentTypeError("{} is not a valid positive int".format(s))
+    # TODO It is not clear what is current mapsize limit for map allowed by BPF.
+    # so for now just check it is an unsigned int...
+    max_long_value = ct.c_uint(-1)
+    if i > max_long_value.value :
+        raise argparse.ArgumentTypeError("{} is not a valid positive int, max value is {}".format(s, max_long_value.value))
+
+    return i
+
 # Parse Arguments
 parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("ifnet", help="network interface to load balance (e.g. eth0)")
@@ -65,18 +82,24 @@ parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP po
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
                     help="Use to set bpf verbosity (0 is minimal)", default=0)
 parser.add_argument("-l", "--loglevel", choices=logLevelNames, help="Use to set logging verbosity.", default="ERROR")
+parser.add_argument("-mp", "--max_ports", type=positive_int, help="Set the maximum number of port to load balance.", default=16)
+parser.add_argument("-mrs", "--max_realservers", type=positive_int, help="Set the maximum number of real servers.", default=32)
+parser.add_argument("-ma", "--max_associations", type=positive_int, help="Set the maximum number of associations,\nmeaning the number of foreign peers supported at the same time.", default=1048576)
 args = parser.parse_args()
 
 # Get configuration from Arguments
-ifnet = args.ifnet                   # network interface to attach xdp program
-virtual_server_ip = args.virtual_server # virtual server IP address
-ports = args.port                    # ports to load balance
-debug = args.debug                   # bpf verbosity
-loglevel = args.loglevel             # log level to used
+ifnet = args.ifnet                       # network interface to attach xdp program
+virtual_server_ip = args.virtual_server  # virtual server IP address
+ports = args.port                        # ports to load balance
+debug = args.debug                       # bpf verbosity
+loglevel = args.loglevel                 # log level to used
+max_ports = args.max_ports               # maximum number of load balanced port (Virtual server ports)
+max_realservers = args.max_realservers   # maximum number of real servers
+max_associations = args.max_associations # maximum number of associations
 
-real_server_ips = []                 # list of real server IP addresses
-config_file = args.config_file       # config file containing real server IP address list
-config_file_mtime = 0                # last modification time of config file
+real_server_ips = []                     # list of real server IP addresses
+config_file = args.config_file           # config file containing real server IP address list
+config_file_mtime = 0                    # last modification time of config file
 
 def load_config(cfgFile):
     """Load configuration from file object and return a list of server"""
@@ -179,14 +202,14 @@ class LogCode(Enum):
                      ip_mac_tostr(event.odmac, event.odaddr).rjust(mac_ip_str_size),
                      ip_mac_tostr(event.osmac, event.osaddr).ljust(mac_ip_str_size)))
             else:
-                print("Invalid direction of UNCHANGED log event : {}".format(self.direction))            
+                print("Invalid direction of UNCHANGED log event : {}".format(self.direction))
         elif self.kind is Kind.NOTIP:
             if self.direction is Direction.UNKNOWN:
                 print(self.msg.format(
                     " "*mac_ip_str_size,
                     " "*mac_ip_str_size))
             else:
-                print("Invalid direction of NOT IP log event : {}".format(self.direction))            
+                print("Invalid direction of NOT IP log event : {}".format(self.direction))
         else:
             print("Invalid kind of log event : {}".format(self.kind))
             
@@ -196,13 +219,30 @@ class LogCode(Enum):
         for code in LogCode:
             macros.append("-D{}={}".format(code.name, code.value))
         return macros
+
+# Check Config
+if len(ports) > max_ports:
+    print ("\nInconsistent config : too many ports, {} ports configured, {} maximum allowed.\nSee option -mp.".format(len(ports), max_ports))
+    exit()
+if len(real_server_ips) > max_realservers:
+    print ("\nInconsistent config : too many real servers, {} real servers configured, {} maximum allowed.\nSee option -mrs.".format(len(real_server_ips), max_realservers))
+    exit()
+
 # Build C flags
 cflags = LogCode.toMacros()
 for levelName in logLevelNames:
     cflags.append("-D{}={}".format(levelName, logging.getLevelName(levelName)))
 cflags.append("-D{}={}".format("LOGLEVEL", loglevel))
+cflags.append("-D{}={}".format("MAX_PORTS", max_ports))
+cflags.append("-D{}={}".format("MAX_REALSERVERS", max_realservers))
+cflags.append("-D{}={}".format("MAX_ASSOCIATIONS", max_associations))
 
 # Compile & attach bpf program
+print("\nCompiling & attaching bpf code ...")
+print("log level : {}".format(loglevel))
+print("max ports : {}".format(max_ports))
+print("max realservers : {}".format(max_realservers))
+print("max associations : {}".format(max_associations))
 print("\nCompiling & attaching bpf code ...")
 b = BPF(src_file ="ulb.c", debug=debug, cflags=cflags)
 fn = b.load_func("xdp_prog", BPF.XDP)
@@ -332,7 +372,10 @@ try:
                 config_file_mtime = new_mtime
                 with open(config_file.name) as f:
                     new_real_server_ips = load_config(f)
+                    if len(new_real_server_ips) > max_realservers:
+                        raise ValueError("too many real servers, {} real servers configured, {} maximum allowed".format(len(new_real_server_ips), max_realservers))
             except Exception as e:
+                new_real_server_ips = None
                 print ("Unable to load config {} file : {}".format(config_file.name, e))
                 print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
 
