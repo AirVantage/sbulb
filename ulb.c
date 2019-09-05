@@ -148,7 +148,8 @@ static inline __be32 * new_association(struct associationKey * k) {
     lbState.update(&zero, &newState);
 
     // Create new association
-    associationTable.update(k, rsIp);
+    if (associationTable.update(k, rsIp))
+        return NULL; // XDP_ABORTED ?
 
     return rsIp;
 }
@@ -301,8 +302,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 // Create association if no real server associated
                 // (or if real server associated does not exist anymore)
                 if (currentRsIp == NULL ||  realServersMap.lookup(currentRsIp) == NULL ) {
-                    currentRsIp = new_association(&k);
-                    if (currentRsIp == NULL) {
+                    if (associationTable.update(&k, rsIp)) {
                         log(ERROR, ctx, EGRESS_CANNOT_CREATE_ASSO, &logEvent);
                         return XDP_DROP; // XDP_ABORTED ?
                     }
