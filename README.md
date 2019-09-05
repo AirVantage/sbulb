@@ -17,7 +17,7 @@ optional arguments:
   -vs VIRTUAL_SERVER, --virtual_server VIRTUAL_SERVER
                         <Required> Virtual server address (e.g. 10.40.0.1)
   -rs REAL_SERVER [REAL_SERVER ...], --real_server REAL_SERVER [REAL_SERVER ...]
-                        <Required> Real server address(es) (e.g. 10.40.0.1)
+                        <Required> Real server address(es) (e.g. 10.40.0.2 10.40.0.3)
   -cfg CONFIG_FILE, --config_file CONFIG_FILE
                         <Required> a path to a file containing real server address(es). 
                         File will be polled each second for modification and configuration
@@ -31,16 +31,16 @@ optional arguments:
   -p PORT [PORT ...], --port PORT [PORT ...]
                         <Required> UDP port(s) to load balance
   -d {0,1,2,3,4}, --debug {0,1,2,3,4}
-                        Use to set bpf verbosity (0 is minimal)
+                        Use to set bpf verbosity, 0 is minimal. (default: 0)
   -l {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}, --loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}
-                        Use to set logging verbosity.
+                        Use to set logging verbosity. (default: ERROR)
   -mp MAX_PORTS, --max_ports MAX_PORTS
-                        Set the maximum number of port to load balance.
+                        Set the maximum number of port to load balance. (default: 16)
   -mrs MAX_REALSERVERS, --max_realservers MAX_REALSERVERS
-                        Set the maximum number of real servers.
+                        Set the maximum number of real servers. (default: 32)
   -ma MAX_ASSOCIATIONS, --max_associations MAX_ASSOCIATIONS
-                        Set the maximum number of associations,
-                        meaning the number of foreign peer to support at the same time.
+                        Set the maximum number of associations. (default: 1048576)
+                        This defined the maximum number of foreign peers supported at the same time.
 ```
 Eg : `sudo python3 ulb.py eth0 -vs 10.188.7.99 -rs 10.188.100.163 10.188.100.230  -p 5683 5684
 `

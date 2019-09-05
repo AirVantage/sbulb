@@ -67,7 +67,7 @@ parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument("ifnet", help="network interface to load balance (e.g. eth0)")
 parser.add_argument("-vs", "--virtual_server", type=ip_parser, help="<Required> Virtual server address (e.g. 10.40.0.1)", required=True)
 group = parser.add_mutually_exclusive_group(required=True)
-group.add_argument("-rs", "--real_server", type=ip_parser, nargs='+', help="<Required> Real server address(es) (e.g. 10.40.0.1)")
+group.add_argument("-rs", "--real_server", type=ip_parser, nargs='+', help="<Required> Real server address(es) (e.g. 10.40.0.2 10.40.0.3)")
 group.add_argument("-cfg", "--config_file", type=argparse.FileType('r'), help='''<Required> a path to a file containing real server address(es). 
 File will be polled each second for modification and configuration
 updated dynamically. A file content example :
@@ -80,11 +80,11 @@ updated dynamically. A file content example :
 ''')
 parser.add_argument("-p", "--port", type=int, nargs='+', help="<Required> UDP port(s) to load balance", required=True)
 parser.add_argument("-d", "--debug", type=int, choices=[0, 1, 2, 3, 4],
-                    help="Use to set bpf verbosity (0 is minimal)", default=0)
-parser.add_argument("-l", "--loglevel", choices=logLevelNames, help="Use to set logging verbosity.", default="ERROR")
-parser.add_argument("-mp", "--max_ports", type=positive_int, help="Set the maximum number of port to load balance.", default=16)
-parser.add_argument("-mrs", "--max_realservers", type=positive_int, help="Set the maximum number of real servers.", default=32)
-parser.add_argument("-ma", "--max_associations", type=positive_int, help="Set the maximum number of associations,\nmeaning the number of foreign peers supported at the same time.", default=1048576)
+                    help="Use to set bpf verbosity, 0 is minimal. (default: %(default)s)", default=0)
+parser.add_argument("-l", "--loglevel", choices=logLevelNames, help="Use to set logging verbosity. (default: %(default)s)", default="ERROR")
+parser.add_argument("-mp", "--max_ports", type=positive_int, help="Set the maximum number of port to load balance. (default: %(default)s)", default=16)
+parser.add_argument("-mrs", "--max_realservers", type=positive_int, help="Set the maximum number of real servers. (default: %(default)s)", default=32)
+parser.add_argument("-ma", "--max_associations", type=positive_int, help="Set the maximum number of associations. (default: %(default)s)\nThis defined the maximum number of foreign peers supported at the same time.", default=1048576)
 args = parser.parse_args()
 
 # Get configuration from Arguments
@@ -320,6 +320,7 @@ elif len(real_server_ips) > 1:
     for n in range(1,len(real_server_ips)-1):    
         print ("{}     ├───> {}".format(" " * ip_str_size, ip_ntostr(real_server_ips[n]).ljust(ip_str_size)))
     print ("{}     └───> {}\n".format(" " * ip_str_size, ip_ntostr(real_server_ips[-1]).ljust(ip_str_size)))
+
 # Shared structure used for "logs" perf_buffer
 class LogEvent(ct.Structure):
     _fields_ = [
