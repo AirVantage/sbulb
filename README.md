@@ -85,6 +85,9 @@ You need :
  - a recent linux kernel to be able to launch xdp/bpf code. (currently tested with 4.19.x package)
  - [bcc](https://github.com/iovisor/bcc) installed. (currently tested with v0.8 : package [python3-bpfcc](https://packages.debian.org/search?suite=all&section=all&arch=any&searchon=names&keywords=python3-bpfcc) on debian)
  - linux-headers installed to allow bcc to compile bpf code.
+
+# Performance 
+See [our wiki page](https://github.com/AirVantage/sbulb/wiki/Benchmark) about that.
  
 # XDP/Bpf
 
