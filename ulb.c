@@ -269,9 +269,9 @@ int xdp_prog(struct xdp_md *ctx) {
 
             // Eth address swapping
             unsigned char dmac[ETH_ALEN];
-            memcpy(eth->h_dest, dmac, ETH_ALEN);             
+            memcpy(dmac, eth->h_dest, ETH_ALEN);             
             // Use virtual server MAC address (so packet destination) as source
-            memcpy(eth->h_source, eth->h_dest, ETH_ALEN); 
+            memcpy(eth->h_dest, eth->h_source, ETH_ALEN); 
             // Use source ethernet address as destination,
             // as we supose all ethernet traffic goes through this gateway.
             // (currently we support use case with only 1 ethernet gateway)
@@ -318,9 +318,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 
                 // Eth address swapping
                 unsigned char dmac[ETH_ALEN];
-                memcpy(eth->h_dest, dmac, ETH_ALEN);       
+                memcpy(dmac, eth->h_dest, ETH_ALEN);             
                 // Use virtual server MAC address (so packet destination) as source
-                memcpy(eth->h_source, eth->h_dest, ETH_ALEN); 
+                memcpy(eth->h_dest, eth->h_source, ETH_ALEN); 
                 // Use source ethernet address as destination,
                 // as we supose all ethernet traffic goes through this gateway.
                 // (currently we support use case with only 1 ethernet gateway)
