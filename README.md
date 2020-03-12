@@ -86,6 +86,21 @@ You need :
  - [bcc](https://github.com/iovisor/bcc) installed. (currently tested with v0.8 : package [python3-bpfcc](https://packages.debian.org/search?suite=all&section=all&arch=any&searchon=names&keywords=python3-bpfcc) on debian)
  - linux-headers installed to allow bcc to compile bpf code.
 
+# Usage with systemd
+
+Sbulb supports the sd_notify(3) mechanism, but does not require systemd or any systemd library to run. This allows sbulb to notify systemd when it is ready to accept connections. To use this feature, you can write a service like this:
+
+    [Unit]
+    Description=UDP Load Balancer
+    Wants=network-online.target
+    [Service]
+    Type=notify
+    NotifyAccess=exec
+    Environment=PYTHONUNBUFFERED=1
+    ExecStart=/usr/bin/python3 ulb.py args...
+    [Install]
+    WantedBy=multi-user.target
+
 # Performance 
 See [our wiki page](https://github.com/AirVantage/sbulb/wiki/Benchmark) about that.
  

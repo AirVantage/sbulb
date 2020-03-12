@@ -12,6 +12,7 @@ import struct
 import re
 import os
 import signal
+import subprocess
 from enum import Enum
 import logging
 
@@ -320,6 +321,13 @@ elif len(real_server_ips) > 1:
     for n in range(1,len(real_server_ips)-1):    
         print ("{}     ├───> {}".format(" " * ip_str_size, ip_ntostr(real_server_ips[n]).ljust(ip_str_size)))
     print ("{}     └───> {}\n".format(" " * ip_str_size, ip_ntostr(real_server_ips[-1]).ljust(ip_str_size)))
+
+# Support systemd notify services.
+if 'NOTIFY_SOCKET' in os.environ:
+    try:
+        subprocess.call("systemd-notify --ready", shell=True)
+    except:
+        pass
 
 # Shared structure used for "logs" perf_buffer
 class LogEvent(ct.Structure):
