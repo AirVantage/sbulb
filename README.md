@@ -116,9 +116,13 @@ Inspirations :
 - [Facebook / katran](https://github.com/facebookincubator/katran)
 - [xdp_load_balancer proto](https://gist.github.com/summerwind/080750455a396a1b1ba78938b3178f6b)
 - [Cilium / cilium](https://github.com/cilium/cilium)
+- [Polycube-network / polycube ](https://github.com/polycube-network/polycube) (see [loadbalancer services](https://github.com/polycube-network/polycube/tree/master/src/services))
 
 Documentations :
  - [bcc](https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md)
  - [kernel version](https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md)
  - [bpf and xdp reference guide from cilium](https://cilium.readthedocs.io/en/v1.5/bpf/)
+ 
+Thesis : 
+ - [High-performance Load Balancer in IOVisor](https://webthesis.biblio.polito.it/7498/1/tesi.pdf)
 
