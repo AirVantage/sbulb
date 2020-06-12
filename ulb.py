@@ -373,28 +373,29 @@ try:
         # read and log perf_buffer
         b.perf_buffer_poll(1000)
         # watch if config file changed
-        new_mtime = os.stat(config_file.name).st_mtime
-        if  new_mtime != config_file_mtime:
-            # load real server from config
-            new_real_server_ips = None
-            try:
-                config_file_mtime = new_mtime
-                with open(config_file.name) as f:
-                    new_real_server_ips = load_config(f)
-                    if len(new_real_server_ips) > max_realservers:
-                        raise ValueError("too many real servers, {} real servers configured, {} maximum allowed".format(len(new_real_server_ips), max_realservers))
-            except Exception as e:
+        if config_file:
+            new_mtime = os.stat(config_file.name).st_mtime
+            if  new_mtime != config_file_mtime:
+                # load real server from config
                 new_real_server_ips = None
-                print ("Unable to load config {} file : {}".format(config_file.name, e))
-                print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
-
-            # if succeed try to update bpf map
-            if new_real_server_ips is not None:
-                print("Apply new config ...")
-                update_real_server(real_server_ips, new_real_server_ips)
-                real_server_ips = new_real_server_ips
-                dump_map()
-                print("... new config applied.")
+                try:
+                    config_file_mtime = new_mtime
+                    with open(config_file.name) as f:
+                        new_real_server_ips = load_config(f)
+                        if len(new_real_server_ips) > max_realservers:
+                            raise ValueError("too many real servers, {} real servers configured, {} maximum allowed".format(len(new_real_server_ips), max_realservers))
+                except Exception as e:
+                    new_real_server_ips = None
+                    print ("Unable to load config {} file : {}".format(config_file.name, e))
+                    print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
+    
+                # if succeed try to update bpf map
+                if new_real_server_ips is not None:
+                    print("Apply new config ...")
+                    update_real_server(real_server_ips, new_real_server_ips)
+                    real_server_ips = new_real_server_ips
+                    dump_map()
+                    print("... new config applied.")
         # DEBUG STUFF
         #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
         #while msg:
