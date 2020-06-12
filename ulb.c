@@ -9,45 +9,6 @@
 #include <linux/tcp.h>
 #include <linux/udp.h>
 
-/* 0x3FFF mask to check for fragment offset field */
-#define IP_FRAGMENTED 65343
-
-// keys for association table.
-struct associationKey {
-    __be32 ipAddr; 
-    __be16 port; 
-};
-
-// load balancer state.
-struct state {
-    int nextRS; // new real server index
-};
-
-// Log structure
-struct logEvent {
-    // code identifing the kind of events
-    int code;
-    // old/original packet addresses
-    unsigned char odmac[ETH_ALEN];
-    unsigned char osmac[ETH_ALEN];
-    __be32 odaddr;
-    __be32 osaddr;
-    // new/modified packet addresses
-    unsigned char ndmac[ETH_ALEN];
-    unsigned char nsmac[ETH_ALEN];
-    __be32 ndaddr;
-    __be32 nsaddr;    
-};
-BPF_PERF_OUTPUT(logs);
-// Logging function
-__attribute__((__always_inline__))
-static inline void log(unsigned char level, struct xdp_md *ctx, unsigned char code, struct logEvent * logEvent) {
-    if (level >= LOGLEVEL) {
-        logEvent->code = code;
-        logs.perf_submit(ctx, logEvent, sizeof(*logEvent));
-    }
-}
-
 // Checksum utilities
 __attribute__((__always_inline__))
 static inline __u16 csum_fold_helper(__u64 csum) {
@@ -112,20 +73,63 @@ static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
     *csum = csum_fold_helper(*csum);
 }
 
-// A map which contains virtual server IP address (__be32)
-BPF_HASH(virtualServer, int, __be32, 1);
+/* include ip handling util */
+#ifdef IPV6
+#include "ulb_ipv6.c"
+#else
+#include "ulb_ipv4.c"
+#endif
+
+// keys for association table.
+struct associationKey {
+    ip_addr ipAddr;
+    __be16 port; 
+};
+
+// load balancer state.
+struct state {
+    int nextRS; // new real server index
+};
+
+// Log structure
+struct logEvent {
+    // code identifing the kind of events
+    int code;
+    // old/original packet addresses
+    unsigned char odmac[ETH_ALEN];
+    unsigned char osmac[ETH_ALEN];
+    ip_addr odaddr;
+    ip_addr osaddr;
+    // new/modified packet addresses
+    unsigned char ndmac[ETH_ALEN];
+    unsigned char nsmac[ETH_ALEN];
+    ip_addr ndaddr;
+    ip_addr nsaddr;
+};
+BPF_PERF_OUTPUT(logs);
+// Logging function
+__attribute__((__always_inline__))
+static inline void log(unsigned char level, struct xdp_md *ctx, unsigned char code, struct logEvent * logEvent) {
+    if (level >= LOGLEVEL) {
+        logEvent->code = code;
+        logs.perf_submit(ctx, logEvent, sizeof(*logEvent));
+    }
+}
+
+// A map which contains virtual server IP address
+BPF_HASH(virtualServer, int, ip_addr, 1);
 // A map which contains port to redirect
 BPF_HASH(ports, __be16, int, MAX_PORTS);
-// maps which contains real server IP addresses (__be32)
-BPF_HASH(realServersArray, int, __be32, MAX_REALSERVERS);
-BPF_HASH(realServersMap, __be32, __be32, MAX_REALSERVERS);
-// association tables : link a foreign peer to a real server IP address (__be12)
-BPF_TABLE("lru_hash", struct associationKey, __be32, associationTable, MAX_ASSOCIATIONS);
+// maps which contains real server IP addresses
+BPF_HASH(realServersArray, int, ip_addr, MAX_REALSERVERS);
+BPF_HASH(realServersMap, ip_addr, ip_addr, MAX_REALSERVERS);
+// association tables : link a foreign peer to a real server IP address
+BPF_TABLE("lru_hash", struct associationKey, ip_addr, associationTable, MAX_ASSOCIATIONS);
 // load balancer state
 BPF_HASH(lbState, int, struct state, 1);
 
 __attribute__((__always_inline__))
-static inline __be32 * new_association(struct associationKey * k) {
+static inline ip_addr * new_association(struct associationKey * k) {
     // Get index of real server which must handle this peer
     int zero = 0;
     struct state * state = lbState.lookup(&zero);
@@ -134,7 +138,7 @@ static inline __be32 * new_association(struct associationKey * k) {
         rsIndex = state->nextRS;
 
     // Get real server from this index.
-    __be32 * rsIp = realServersArray.lookup(&rsIndex);
+    ip_addr * rsIp = realServersArray.lookup(&rsIndex);
     if (rsIp == NULL) {
         rsIndex = 0; // probably index out of bound so we restart from 0
         rsIp = realServersArray.lookup(&rsIndex);
@@ -167,58 +171,41 @@ int xdp_prog(struct xdp_md *ctx) {
         return XDP_DROP;
     }
 
-    // Handle only IPv4 packets
-    if (eth->h_proto != bpf_htons(ETH_P_IP)) {
-        log(TRACE, ctx, NOT_IP_V4, &logEvent);
-        return XDP_PASS;
-    }
-
-    // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/ip.h
-    struct iphdr *iph;
-    iph = (struct iphdr *) (eth + 1);
-    if ((void *) (iph + 1) > data_end) {
-        log(WARNING, ctx, INVALID_IP_SIZE, &logEvent);
-        return XDP_DROP;
-    }
-    
+    // Parse IP header : extract ip address & udp header
+    struct udphdr * udp = NULL;
+    ip_addr * saddr = NULL;
+    ip_addr * daddr = NULL;
+    int res = parse_ip_header(eth, data_end, &udp, &saddr, &daddr);
     // Store packet addresses for logging
-    memcpy(&logEvent.odmac, eth->h_dest, ETH_ALEN);
-    memcpy(&logEvent.osmac, eth->h_source, ETH_ALEN);
-    logEvent.odaddr = iph->daddr;
-    logEvent.osaddr = iph->saddr;
-
-    // Minimum valid header length value is 5.
-    // see (https://tools.ietf.org/html/rfc791#section-3.1)
-    if (iph->ihl < 5) {
-        log(WARNING, ctx, TOO_SMALL_IP_HEADER, &logEvent);
-        return XDP_DROP;
+    if (saddr != NULL && daddr != NULL) {
+        memcpy(&logEvent.odmac, eth->h_dest, ETH_ALEN);
+        memcpy(&logEvent.osmac, eth->h_source, ETH_ALEN);
+        copy_ip_addr(&logEvent.odaddr, daddr);
+        copy_ip_addr(&logEvent.osaddr, saddr);
     }
-    // We only handle UDP traffic
-    if (iph->protocol != IPPROTO_UDP) {
-        log(TRACE, ctx, NOT_UDP, &logEvent);
-        return XDP_PASS;
+    // Handle ip header error
+    if (udp == NULL){
+        switch(res) {
+            case NOT_IP_V4 :
+            case NOT_IP_V6 :
+            case NOT_UDP :
+                log(TRACE, ctx, res, &logEvent);
+                return XDP_PASS;
+            case FRAGMENTED_IP_PACKET:
+            case TOO_BIG_IP_HEADER:
+                log(INFO, ctx, res, &logEvent);
+                return XDP_PASS;
+            case INVALID_IP_SIZE :
+            case TOO_SMALL_IP_HEADER:
+                log(WARNING, ctx, res, &logEvent);
+                return XDP_DROP;
+            default :
+                log(ERROR, ctx, res, &logEvent);
+                return XDP_PASS;
+        }
     }
-    // IP header size is variable because of options field.
-    // see (https://tools.ietf.org/html/rfc791#section-3.1)
-    //if ((void *) iph + iph->ihl * 4 > data_end)
-    //    return XDP_DROP;
-    // TODO #16 support IP header with variable size
-    if (iph->ihl != 5) {
-        log(INFO, ctx, TOO_BIG_IP_HEADER, &logEvent);
-        return XDP_PASS;
-    }
-    // Do not support fragmented packets
-    if (iph->frag_off & IP_FRAGMENTED) {
-        log(INFO, ctx, FRAGMENTED_IP_PACKET, &logEvent);
-        return XDP_PASS; // TODO #17 should we support it ?
-    }
-    // TODO #15 we should drop packet with ttl = 0
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
-    struct udphdr *udp;
-    // TODO #16 support IP header with variable size
-    //udp = (void *) iph + iph->ihl * 4;
-    udp = (struct udphdr *) (iph + 1);
     if ((void *) (udp + 1) > data_end) {
         log(WARNING, ctx, INVALID_UDP_SIZE, &logEvent);
         return XDP_DROP;
@@ -226,18 +213,20 @@ int xdp_prog(struct xdp_md *ctx) {
 
     // Get virtual server
     int zero =  0;
-    __be32 * vsIp = virtualServer.lookup(&zero);
+    ip_addr * vsIp = virtualServer.lookup(&zero);
     if (vsIp == NULL) {
         log(ERROR, ctx, NO_VIRTUAL_SERVER, &logEvent);
         return XDP_PASS;
     }
 
     // Store ip address modification for checksum incremental update
-    __be32 old_addr;
-    __be32 new_addr;
+    ip_addr old_addr;
+    __builtin_memset(&old_addr, 0, sizeof(old_addr));
+    ip_addr new_addr;
+    __builtin_memset(&new_addr, 0, sizeof(new_addr));
 
     // Is it ingress traffic ? destination IP == VIP
-    if (iph->daddr == *vsIp) {
+    if (compare_ip_addr(daddr, vsIp)) {
         // do not handle traffic on ports we don't want to redirect
         if (!ports.lookup(&(udp->dest))) {
             log(TRACE, ctx, INGRESS_NOT_HANDLED_PORT, &logEvent);
@@ -246,9 +235,9 @@ int xdp_prog(struct xdp_md *ctx) {
             // Handle ingress traffic
             // Find real server associated
             struct associationKey k = {};
-            k.ipAddr = iph->saddr; 
+            copy_ip_addr(&k.ipAddr, saddr);
             k.port = udp->source;
-            __be32 * rsIp = associationTable.lookup(&k);
+            ip_addr * rsIp = associationTable.lookup(&k);
             // Create association if no real server associated
             // (or if real server associated does not exist anymore)
             if (rsIp == NULL || realServersMap.lookup(rsIp) == NULL) {
@@ -278,15 +267,15 @@ int xdp_prog(struct xdp_md *ctx) {
             memcpy(eth->h_source, dmac, ETH_ALEN);
 
             // Update IP address (DESTINATION NAT)
-            old_addr = iph->daddr;
-            new_addr = *rsIp;
-            iph->daddr = *rsIp; // use real server IP address as destination
+            copy_ip_addr(&old_addr,daddr);
+            copy_ip_addr(&new_addr, rsIp);
+            copy_ip_addr(daddr, rsIp); // use real server IP address as destination
 
             // TODO #15 we should probably decrement ttl too
         }
     } else {
         // Is it egress traffic ? source ip == a real server IP
-        __be32 * rsIp = realServersMap.lookup(&iph->saddr);
+        ip_addr * rsIp = realServersMap.lookup(saddr);
         if (rsIp != NULL) {
             // do not handle traffic on ports we don't want to redirect
             if (!ports.lookup(&(udp->source))) {
@@ -296,9 +285,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 // Handle egress traffic
                 // Find real server associated to this foreign peer
                 struct associationKey k = {};
-                k.ipAddr = iph->daddr; 
+                copy_ip_addr(&k.ipAddr, daddr);
                 k.port = udp->dest;
-                __be32 * currentRsIp = associationTable.lookup(&k);
+                ip_addr * currentRsIp = associationTable.lookup(&k);
                 // Create association if no real server associated
                 // (or if real server associated does not exist anymore)
                 if (currentRsIp == NULL ||  realServersMap.lookup(currentRsIp) == NULL ) {
@@ -307,7 +296,7 @@ int xdp_prog(struct xdp_md *ctx) {
                         return XDP_DROP; // XDP_ABORTED ?
                     }
                     logEvent.code = EGRESS_NEW_NAT;
-                } else if (*currentRsIp != *rsIp) {
+                } else if (!compare_ip_addr(currentRsIp, rsIp)) {
                     // If there is an association
                     // only associated server is allow to send packet
                     log(INFO, ctx, EGRESS_NOT_AUTHORIZED, &logEvent);
@@ -327,9 +316,9 @@ int xdp_prog(struct xdp_md *ctx) {
                 memcpy(eth->h_source, dmac, ETH_ALEN);
 
                 // Update IP address (SOURCE NAT)
-                old_addr = iph->saddr;
-                new_addr = *vsIp;
-                iph->saddr = *vsIp; // use virtual server IP address as source
+                copy_ip_addr(&old_addr,saddr);
+                copy_ip_addr(&new_addr,vsIp);
+                copy_ip_addr(saddr,vsIp); // use virtual server IP address as source
 
                 // TODO #15 we should probably decrement ttl too
             }
@@ -341,24 +330,17 @@ int xdp_prog(struct xdp_md *ctx) {
     }
   
     // Update IP checksum
-    // TODO #16 support IP header with variable size
-    iph->check = 0;
-    __u64 cs = 0 ;
-    // TODO #7 consider to use incremental update checksum here too.
-    ipv4_csum(iph, sizeof (*iph), &cs);
-    iph->check = cs;
+    update_ip_checksum(eth, data_end, old_addr, new_addr);
 
     // Update UDP checksum
-    cs = udp->check;
-    update_csum(&cs , old_addr, new_addr);
-    udp->check = cs;
+    udp->check = update_udp_checksum(udp->check, old_addr, new_addr);
 
     // Log address translation
     // Store new addresses
     memcpy(&logEvent.ndmac, eth->h_dest, ETH_ALEN);
     memcpy(&logEvent.nsmac, eth->h_source, ETH_ALEN);
-    logEvent.ndaddr = iph->daddr;
-    logEvent.nsaddr = iph->saddr;
+    copy_ip_addr(&logEvent.ndaddr, daddr);
+    copy_ip_addr(&logEvent.nsaddr, saddr);
     log(DEBUG, ctx, logEvent.code, &logEvent);
 
     return XDP_TX;

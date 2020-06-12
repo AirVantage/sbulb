@@ -22,12 +22,24 @@ logging.addLevelName(5, "TRACE") # add TRACE level
 
 # Utils
 def ip_strton(ip_address):
-    return socket.htonl((int) (ipaddress.ip_address(ip_address)))
+    addr = ipaddress.ip_address(ip_address)
+    if addr.version == 4:
+        return ct.c_uint(socket.htonl((int) (addr)))
+    else:
+        return (ct.c_ubyte*16)(*list(addr.packed))
 
 def ip_ntostr(ip_address):
+    # handle ipv4
     if isinstance(ip_address, ct.c_uint):
-        ip_address = ip_address.value
-    return str(ipaddress.ip_address(socket.ntohl(ip_address)))
+        ip_address = ip_address.value;
+    if isinstance(ip_address, int):
+        return str(ipaddress.IPv4Address(socket.ntohl(ip_address)))
+    # handle ipv6
+    if "bcc" in str(type(ip_address)):
+        ip_address = ip_address.in6_u.u6_addr8
+    if isinstance(ip_address,ct.c_ubyte * 16):
+        ip_address = bytes(bytearray(ip_address))
+        return str(ipaddress.IPv6Address(ip_address))
 
 def mac_btostr(mac_address):
     bytestr = bytes(mac_address).hex()
@@ -91,6 +103,7 @@ args = parser.parse_args()
 # Get configuration from Arguments
 ifnet = args.ifnet                       # network interface to attach xdp program
 virtual_server_ip = args.virtual_server  # virtual server IP address
+ipv6 =type(virtual_server_ip)!=ct.c_uint # true if ipv6 is used, false for ipv4
 ports = args.port                        # ports to load balance
 debug = args.debug                       # bpf verbosity
 loglevel = args.loglevel                 # log level to used
@@ -105,7 +118,7 @@ config_file_mtime = 0                    # last modification time of config file
 def load_config(cfgFile):
     """Load configuration from file object and return a list of server"""
     print ("\nLoading real servers from {} file ...".format(cfgFile.name))
-    config = configparser.ConfigParser(allow_no_value=True)
+    config = configparser.ConfigParser(allow_no_value=True, delimiters=("="))
     config.read_file(cfgFile)
     rs = []
     for ip in config["Real Servers"]:
@@ -140,6 +153,8 @@ class LogCode(Enum):
     # NOT IP (message with out address) 
     INVALID_ETH_SIZE            = "{} <-> {} Invalid size for ethernet packet", Direction.UNKNOWN, Kind.NOTIP
     NOT_IP_V4                   = "{} <-> {} Not IPv4 packet", Direction.UNKNOWN, Kind.NOTIP
+    NOT_IP_V6                   = "{} <-> {} Not IPv6 packet", Direction.UNKNOWN, Kind.NOTIP
+    UNEXPECTED_IPHDR_PARSING_ERR= "{} <-> {} Unexpected error return by ip header parsing", Direction.UNKNOWN, Kind.NOTIP
 
     # UNCHANGED (message with origin address only)
     INVALID_IP_SIZE             = "{} <─> {} Invalid size for IP packet", Direction.UNKNOWN, Kind.UNCHANGED
@@ -177,7 +192,7 @@ class LogCode(Enum):
 
     def log(self, event):
         """Print log message."""
-        mac_ip_str_size = 33
+        mac_ip_str_size = 57 if ipv6 else 33
         if self.kind is Kind.NAT:
             if self.direction is Direction.INGRESS:
                 print(self.msg.format(
@@ -237,6 +252,8 @@ cflags.append("-D{}={}".format("LOGLEVEL", loglevel))
 cflags.append("-D{}={}".format("MAX_PORTS", max_ports))
 cflags.append("-D{}={}".format("MAX_REALSERVERS", max_realservers))
 cflags.append("-D{}={}".format("MAX_ASSOCIATIONS", max_associations))
+if ipv6:
+    cflags.append("-DIPV6=true");
 
 # Compile & attach bpf program
 print("\nCompiling & attaching bpf code ...")
@@ -255,7 +272,7 @@ print("... compilation and attachement succeed.")
 ## Virtual server config
 print("\nApplying config to bpf ...")
 virtual_server_map = b.get_table("virtualServer")
-virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server_ip)
+virtual_server_map[virtual_server_map.Key(0)] = virtual_server_ip
 ## Ports configs
 ports_map = b["ports"]
 for port in ports:
@@ -272,8 +289,8 @@ def update_real_server(old_server_ips, new_server_ips):
         if i >= nbOld:
             #addition
             new_server_ip = new_server_ips[i]
-            real_servers_map[real_servers_map.Key(new_server_ip)] = real_servers_map.Leaf(new_server_ip)
-            real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server_ip)
+            real_servers_map[new_server_ip] = new_server_ip
+            real_servers_array[real_servers_array.Key(i)] = new_server_ip
             print("Add {} at index {}".format(ip_ntostr(new_server_ip), i))
         elif i >= nbNew:
             #deletion
@@ -312,7 +329,7 @@ print("... config applied to bpf.")
 
 # Started
 print("\nLoad balancing UDP traffic over {} interface for port(s) {} :".format(ifnet, ports, ip_ntostr(virtual_server_ip)))
-ip_str_size = 15
+ip_str_size = 39 if ipv6 else 15
 print("{}           {}".format("Virtual Server".rjust(ip_str_size),"Real Server(s)".ljust(ip_str_size)))
 if len(real_server_ips) == 1:
     print ("{} <───────> {}\n".format(ip_ntostr(virtual_server_ip).rjust(ip_str_size), ip_ntostr(real_server_ips[0]).ljust(ip_str_size)))
@@ -332,18 +349,18 @@ if 'NOTIFY_SOCKET' in os.environ:
 # Shared structure used for "logs" perf_buffer
 class LogEvent(ct.Structure):
     _fields_ = [
-	# code identied the kind of events
+    # code identied the kind of events
         ("code", ct.c_uint),
-	# old/original packet addresses
-        ("odmac", ct.c_ubyte * 6),   
+    # old/original packet addresses
+        ("odmac", ct.c_ubyte * 6),
         ("osmac", ct.c_ubyte * 6),
-        ("odaddr", ct.c_uint),
-        ("osaddr", ct.c_uint),
-	# new/modified packet addresses
-        ("ndmac", ct.c_ubyte * 6),   
+        ("odaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
+        ("osaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
+    # new/modified packet addresses
+        ("ndmac", ct.c_ubyte * 6),
         ("nsmac", ct.c_ubyte * 6),
-        ("ndaddr", ct.c_uint),
-        ("nsaddr", ct.c_uint),
+        ("ndaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
+        ("nsaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
     ]
         
 # Utility function to print log
@@ -388,7 +405,7 @@ try:
                     new_real_server_ips = None
                     print ("Unable to load config {} file : {}".format(config_file.name, e))
                     print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
-    
+
                 # if succeed try to update bpf map
                 if new_real_server_ips is not None:
                     print("Apply new config ...")

@@ -74,7 +74,6 @@ The other point is **server initiated communication**. We want to be able to ini
 # Limitation
 This is a simple load-balancer and so it have some limitations :
 
-- IPv4 support only for now.
 - All traffic (ingress and egress) should be handled by the same network interface.
 - All traffic should go to the same ethernet gateway (which is the case most of the time).
 - Does not support IP fragmentation.
