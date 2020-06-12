@@ -95,7 +95,7 @@ Sbulb supports the sd_notify(3) mechanism, but does not require systemd or any s
     Wants=network-online.target
     [Service]
     Type=notify
-    NotifyAccess=exec
+    NotifyAccess=all
     Environment=PYTHONUNBUFFERED=1
     ExecStart=/usr/bin/python3 ulb.py args...
     [Install]
