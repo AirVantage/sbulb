@@ -22,12 +22,26 @@ logging.addLevelName(5, "TRACE") # add TRACE level
 
 # Utils
 def ip_strton(ip_address):
-    return socket.htonl((int) (ipaddress.ip_address(ip_address)))
+    addr = ipaddress.ip_address(ip_address)
+    if addr.version == 4:
+        return socket.htonl((int) (addr))
+    else:
+        #print(addr.packed.hex())
+        #res = ct.cast(addr.packed, ct.POINTER(ct.c_ubyte * 16)).contents
+        res = (ct.c_ubyte*16)(*list(addr.packed))
+        #for i in res: print(i, end=" ")
+        return res
 
 def ip_ntostr(ip_address):
     if isinstance(ip_address, ct.c_uint):
         ip_address = ip_address.value
-    return str(ipaddress.ip_address(socket.ntohl(ip_address)))
+    if isinstance(ip_address, int):
+        ip_address = socket.ntohl(ip_address)
+    if "bcc" in str(type(ip_address)):
+        ip_address = ip_address.in6_u.u6_addr8
+    if isinstance(ip_address,ct.c_ubyte * 16):
+        ip_address = bytes(bytearray(ip_address))
+    return str(ipaddress.IPv6Address(ip_address))
 
 def mac_btostr(mac_address):
     bytestr = bytes(mac_address).hex()
@@ -140,6 +154,7 @@ class LogCode(Enum):
     # NOT IP (message with out address) 
     INVALID_ETH_SIZE            = "{} <-> {} Invalid size for ethernet packet", Direction.UNKNOWN, Kind.NOTIP
     NOT_IP_V4                   = "{} <-> {} Not IPv4 packet", Direction.UNKNOWN, Kind.NOTIP
+    NOT_IP_V6                   = "{} <-> {} Not IPv6 packet", Direction.UNKNOWN, Kind.NOTIP
 
     # UNCHANGED (message with origin address only)
     INVALID_IP_SIZE             = "{} <─> {} Invalid size for IP packet", Direction.UNKNOWN, Kind.UNCHANGED
@@ -255,7 +270,7 @@ print("... compilation and attachement succeed.")
 ## Virtual server config
 print("\nApplying config to bpf ...")
 virtual_server_map = b.get_table("virtualServer")
-virtual_server_map[virtual_server_map.Key(0)] = virtual_server_map.Leaf(virtual_server_ip)
+virtual_server_map[virtual_server_map.Key(0)] = virtual_server_ip
 ## Ports configs
 ports_map = b["ports"]
 for port in ports:
@@ -272,8 +287,8 @@ def update_real_server(old_server_ips, new_server_ips):
         if i >= nbOld:
             #addition
             new_server_ip = new_server_ips[i]
-            real_servers_map[real_servers_map.Key(new_server_ip)] = real_servers_map.Leaf(new_server_ip)
-            real_servers_array[real_servers_array.Key(i)] = real_servers_array.Leaf(new_server_ip)
+            real_servers_map[new_server_ip] = new_server_ip
+            real_servers_array[real_servers_array.Key(i)] = new_server_ip
             print("Add {} at index {}".format(ip_ntostr(new_server_ip), i))
         elif i >= nbNew:
             #deletion
@@ -332,18 +347,18 @@ if 'NOTIFY_SOCKET' in os.environ:
 # Shared structure used for "logs" perf_buffer
 class LogEvent(ct.Structure):
     _fields_ = [
-	# code identied the kind of events
+    # code identied the kind of events
         ("code", ct.c_uint),
-	# old/original packet addresses
+    # old/original packet addresses
         ("odmac", ct.c_ubyte * 6),   
         ("osmac", ct.c_ubyte * 6),
-        ("odaddr", ct.c_uint),
-        ("osaddr", ct.c_uint),
-	# new/modified packet addresses
+        ("odaddr", ct.c_ubyte * 16),
+        ("osaddr", ct.c_ubyte * 16),
+    # new/modified packet addresses
         ("ndmac", ct.c_ubyte * 6),   
         ("nsmac", ct.c_ubyte * 6),
-        ("ndaddr", ct.c_uint),
-        ("nsaddr", ct.c_uint),
+        ("ndaddr", ct.c_ubyte * 16),
+        ("nsaddr", ct.c_ubyte * 16),
     ]
         
 # Utility function to print log
@@ -388,7 +403,6 @@ try:
                     new_real_server_ips = None
                     print ("Unable to load config {} file : {}".format(config_file.name, e))
                     print ("Old Config is keeping : {}".format(ips_tostr(real_server_ips)))
-    
                 # if succeed try to update bpf map
                 if new_real_server_ips is not None:
                     print("Apply new config ...")
@@ -396,11 +410,11 @@ try:
                     real_server_ips = new_real_server_ips
                     dump_map()
                     print("... new config applied.")
-        # DEBUG STUFF
-        #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
-        #while msg:
-        #    print("%s \n" % (msg))
-        #    (task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
+            # DEBUG STUFF
+            #(task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
+            #while msg:
+            #    print("%s \n" % (msg))
+            #    (task, pid, cpu, flags, ts, msg) = b.trace_fields(nonblocking = True)
 finally:
     # Detach bpf progam
     print ("Detaching bpf code ...")
