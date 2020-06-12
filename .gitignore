@@ -1,1 +1,4 @@
 *.ini
+/tmp/
+/.project
+/.pydevproject
