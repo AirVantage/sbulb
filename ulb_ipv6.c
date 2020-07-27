@@ -39,7 +39,10 @@ static inline int parse_ip_header(struct ethhdr * eth, void * data_end, struct u
         return NOT_UDP;
     }
 
-    // TODO #15 we should drop packet with hoplimit = 0 for ipv6
+    // handle packet lifetime : https://tools.ietf.org/html/rfc8200#section-3
+    if (iph->hop_limit <= 0)
+       	return LIFETIME_EXPIRED;
+    // TODO #15 we should maybe send an ICMP packet
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
     // Extract UDP header
@@ -59,3 +62,9 @@ static inline int update_udp_checksum(__u64 cs, ip_addr old_addr, ip_addr new_ad
     return cs;
 }
 
+__attribute__((__always_inline__))
+static inline void decrease_packet_lifetime(struct ethhdr * eth) {
+    struct ipv6hdr *iph;
+    iph = (struct ipv6hdr *) (eth + 1);
+    --iph->hop_limit;
+}

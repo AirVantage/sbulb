@@ -190,7 +190,8 @@ class LogCode(Enum):
     INVALID_UDP_SIZE            = "{} <─> {} Invalid size for UDP packet", Direction.UNKNOWN, Kind.UNCHANGED
     NO_VIRTUAL_SERVER           = "{} <─> {} No virtual server configured", Direction.UNKNOWN, Kind.UNCHANGED
     UNHANDLED_TRAFFIC           = "{} <─> {} Unhandled traffic", Direction.UNKNOWN, Kind.UNCHANGED
-    
+    LIFETIME_EXPIRED            = "{} <-> {} TTL or hoplimit expired", Direction.UNKNOWN, Kind.UNCHANGED
+
     INGRESS_NOT_HANDLED_PORT    = "{} ──> {} Unhandled port", Direction.INGRESS, Kind.UNCHANGED
     INGRESS_CANNOT_CREATE_ASSO  = "{} ──> {} Unable to create association", Direction.INGRESS, Kind.UNCHANGED
     INGRESS_CANNOT_CREATE_ASSO2 = "{} ──> {} Unable to create association (MUST not happened", Direction.INGRESS, Kind.UNCHANGED

@@ -57,7 +57,11 @@ static inline int parse_ip_header(struct ethhdr * eth, void * data_end, struct u
     if (iph->frag_off & IP_FRAGMENTED) {
         return FRAGMENTED_IP_PACKET;
     }
-    // TODO #15 we should drop packet with ttl = 0 for ipv4
+
+    // handle packet lifetime : https://tools.ietf.org/html/rfc791
+    if (iph->ttl <= 0)
+    	return LIFETIME_EXPIRED;
+    // TODO #15 we should maybe send an ICMP packet
 
     // https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/tree/include/uapi/linux/udp.h
     // Extract UDP header
@@ -80,3 +84,15 @@ static inline int update_udp_checksum(__u64 cs, ip_addr old_addr, ip_addr new_ad
     return cs;
 }
 
+__attribute__((__always_inline__))
+static inline void decrease_packet_lifetime(struct ethhdr * eth){
+    struct iphdr *iph;
+    iph = (struct iphdr *) (eth + 1);
+
+    // from include/net/ip.h
+    u32 check = (__force u32)iph->check;
+    check += (__force u32)htons(0x0100);
+    iph->check = (__force __sum16)(check + (check >= 0xFFFF));
+
+    --iph->ttl;
+}

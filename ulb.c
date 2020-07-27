@@ -128,6 +128,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 return XDP_PASS;
             case INVALID_IP_SIZE :
             case TOO_SMALL_IP_HEADER:
+            case LIFETIME_EXPIRED:
                 log(WARNING, ctx, res, &logEvent);
                 return XDP_DROP;
             default :
@@ -202,7 +203,7 @@ int xdp_prog(struct xdp_md *ctx) {
             copy_ip_addr(&new_addr, rsIp);
             copy_ip_addr(daddr, rsIp); // use real server IP address as destination
 
-            // TODO #15 we should probably decrement ttl too
+            decrease_packet_lifetime(eth);
         }
     } else {
         // Is it egress traffic ? source ip == a real server IP
@@ -251,7 +252,7 @@ int xdp_prog(struct xdp_md *ctx) {
                 copy_ip_addr(&new_addr,vsIp);
                 copy_ip_addr(saddr,vsIp); // use virtual server IP address as source
 
-                // TODO #15 we should probably decrement ttl too
+                decrease_packet_lifetime(eth);
             }
         } else {
             // neither ingress(destIP=VirtualServerIP) nor egress(sourceIP=RealServerIP) traffic
