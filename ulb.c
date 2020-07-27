@@ -1,79 +1,10 @@
 #define KBUILD_MODNAME "foo"
 #include <uapi/linux/bpf.h>
 #include <linux/bpf.h>
-#include <linux/icmp.h>
 #include <linux/if_ether.h>
-#include <linux/if_vlan.h>
-#include <linux/in.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
 #include <linux/udp.h>
 
-// Checksum utilities
-__attribute__((__always_inline__))
-static inline __u16 csum_fold_helper(__u64 csum) {
-  int i;
-  #pragma unroll
-  for (i = 0; i < 4; i ++) {
-    if (csum >> 16)
-      csum = (csum & 0xffff) + (csum >> 16);
-  }
-  return ~csum;
-}
-
-__attribute__((__always_inline__))
-static inline void ipv4_csum_inline(void *iph, __u64 *csum) {
-  __u16 *next_iph_u16 = (__u16 *)iph;
-  #pragma clang loop unroll(full)
-  for (int i = 0; i < sizeof(struct iphdr) >> 1; i++) {
-     *csum += *next_iph_u16++;
-  }
-  *csum = csum_fold_helper(*csum);
-}
-
-__attribute__((__always_inline__))
-static inline void ipv4_csum(void *data_start, int data_size,  __u64 *csum) {
-  *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
-  *csum = csum_fold_helper(*csum);
-}
-
-__attribute__((__always_inline__))
-static inline void ipv4_l4_csum(void *data_start, __u32 data_size,
-                                __u64 *csum, struct iphdr *iph) {
-  __u32 tmp = 0;
-  *csum = bpf_csum_diff(0, 0, &iph->saddr, sizeof(__be32), *csum);
-  *csum = bpf_csum_diff(0, 0, &iph->daddr, sizeof(__be32), *csum);
-  tmp = __builtin_bswap32((__u32)(iph->protocol));
-  *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
-  tmp = __builtin_bswap32((__u32)(data_size));
-  *csum = bpf_csum_diff(0, 0, &tmp, sizeof(__u32), *csum);
-  *csum = bpf_csum_diff(0, 0, data_start, data_size, *csum);
-  *csum = csum_fold_helper(*csum);
-}
-
-// Update checksum following RFC 1624 (Eqn. 3): https://tools.ietf.org/html/rfc1624
-//     HC' = ~(~HC + ~m + m')
-// Where :
-//   HC  - old checksum in header
-//   HC' - new checksum in header
-//   m   - old value
-//   m'  - new value
-__attribute__((__always_inline__))
-static inline void update_csum(__u64 *csum, __be32 old_addr,__be32 new_addr ) {
-    // ~HC 
-    *csum = ~*csum;
-    *csum = *csum & 0xffff;
-    // + ~m
-    __u32 tmp;
-    tmp = ~old_addr;
-    *csum += tmp;
-    // + m
-    *csum += new_addr;
-    // then fold and complement result ! 
-    *csum = csum_fold_helper(*csum);
-}
-
-/* include ip handling util */
+// include ip handling util
 #ifdef IPV6
 #include "ulb_ipv6.c"
 #else

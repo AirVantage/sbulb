@@ -1,4 +1,5 @@
 #include <linux/ip.h>
+#include "ulb_checksum.c"
 
 typedef __be32 ip_addr;
 
@@ -66,13 +67,10 @@ static inline int parse_ip_header(struct ethhdr * eth, void * data_end, struct u
 
 __attribute__((__always_inline__))
 static inline void update_ip_checksum(struct ethhdr * eth, void * data_end, ip_addr old_addr, ip_addr new_addr) {
-    // TODO #16 support IP header with variable size
      struct iphdr *iph;
-    iph = (struct iphdr *) (eth + 1);    
-    iph->check = 0;
-    __u64 cs = 0 ;
-    // TODO #7 consider to use incremental update checksum here too.
-    ipv4_csum(iph, sizeof (*iph), &cs);
+    iph = (struct iphdr *) (eth + 1);
+    __u64 cs = iph->check;
+    update_csum(&cs, old_addr, new_addr);
     iph->check = cs;
 }
 
