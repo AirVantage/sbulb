@@ -41,6 +41,14 @@ def ip_ntostr(ip_address):
         ip_address = bytes(bytearray(ip_address))
         return str(ipaddress.IPv6Address(ip_address))
 
+def ipversion(ip_address):
+    if isinstance(ip_address, ct.c_uint):
+        return 4
+    if isinstance(ip_address,ct.c_ubyte * 16):
+        return 6
+    raise ValueError("unable to guess ip version of {} (type{})".format(ip_address, type(ip_address)))
+
+
 def mac_btostr(mac_address):
     bytestr = bytes(mac_address).hex()
     return ':'.join(bytestr[i:i+2] for i in range(0,12,2))
@@ -103,7 +111,7 @@ args = parser.parse_args()
 # Get configuration from Arguments
 ifnet = args.ifnet                       # network interface to attach xdp program
 virtual_server_ip = args.virtual_server  # virtual server IP address
-ipv6 =type(virtual_server_ip)!=ct.c_uint # true if ipv6 is used, false for ipv4
+ip_version = ipversion(virtual_server_ip)# the current ip version used (4 or 6)
 ports = args.port                        # ports to load balance
 debug = args.debug                       # bpf verbosity
 loglevel = args.loglevel                 # log level to used
@@ -139,6 +147,23 @@ if config_file is not None:
         config_file.close()
 else:
     real_server_ips = args.real_server   # list of real servers IP addresses
+
+# Check Config
+def check_real_servers(real_server_ips):
+    if len(real_server_ips) > max_realservers:
+        raise ValueError("too many real servers, {} real servers configured, {} maximum allowed (see option -mrs)".format(len(real_server_ips), max_realservers))
+    for ip in real_server_ips:
+        if ipversion(ip) is not  ip_version:
+            raise ValueError("Real server ip {} seems to be ipv{} address. ipv{} is expected".format(ip_ntostr(ip), ipversion(ip), ip_version))
+
+if len(ports) > max_ports:
+    print ("\nInconsistent config : too many ports, {} ports configured, {} maximum allowed.\nSee option -mp.".format(len(ports), max_ports))
+    exit()
+try:
+    check_real_servers(real_server_ips) 
+except Exception as e:   
+    print ("\nInconsistent config : {}".format(e))
+    exit()
 
 # Define log code constant
 class Direction(Enum):
@@ -192,7 +217,7 @@ class LogCode(Enum):
 
     def log(self, event):
         """Print log message."""
-        mac_ip_str_size = 57 if ipv6 else 33
+        mac_ip_str_size = 57 if ip_version is 6 else 33
         if self.kind is Kind.NAT:
             if self.direction is Direction.INGRESS:
                 print(self.msg.format(
@@ -236,14 +261,6 @@ class LogCode(Enum):
             macros.append("-D{}={}".format(code.name, code.value))
         return macros
 
-# Check Config
-if len(ports) > max_ports:
-    print ("\nInconsistent config : too many ports, {} ports configured, {} maximum allowed.\nSee option -mp.".format(len(ports), max_ports))
-    exit()
-if len(real_server_ips) > max_realservers:
-    print ("\nInconsistent config : too many real servers, {} real servers configured, {} maximum allowed.\nSee option -mrs.".format(len(real_server_ips), max_realservers))
-    exit()
-
 # Build C flags
 cflags = LogCode.toMacros()
 for levelName in logLevelNames:
@@ -252,7 +269,7 @@ cflags.append("-D{}={}".format("LOGLEVEL", loglevel))
 cflags.append("-D{}={}".format("MAX_PORTS", max_ports))
 cflags.append("-D{}={}".format("MAX_REALSERVERS", max_realservers))
 cflags.append("-D{}={}".format("MAX_ASSOCIATIONS", max_associations))
-if ipv6:
+if ip_version is 6:
     cflags.append("-DIPV6=true");
 
 # Compile & attach bpf program
@@ -329,7 +346,7 @@ print("... config applied to bpf.")
 
 # Started
 print("\nLoad balancing UDP traffic over {} interface for port(s) {} :".format(ifnet, ports, ip_ntostr(virtual_server_ip)))
-ip_str_size = 39 if ipv6 else 15
+ip_str_size = 39 if ip_version is 6 else 15
 print("{}           {}".format("Virtual Server".rjust(ip_str_size),"Real Server(s)".ljust(ip_str_size)))
 if len(real_server_ips) == 1:
     print ("{} <───────> {}\n".format(ip_ntostr(virtual_server_ip).rjust(ip_str_size), ip_ntostr(real_server_ips[0]).ljust(ip_str_size)))
@@ -354,13 +371,13 @@ class LogEvent(ct.Structure):
     # old/original packet addresses
         ("odmac", ct.c_ubyte * 6),
         ("osmac", ct.c_ubyte * 6),
-        ("odaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
-        ("osaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
+        ("odaddr", ct.c_ubyte * 16 if ip_version is 6 else ct.c_uint),
+        ("osaddr", ct.c_ubyte * 16 if ip_version is 6 else ct.c_uint),
     # new/modified packet addresses
         ("ndmac", ct.c_ubyte * 6),
         ("nsmac", ct.c_ubyte * 6),
-        ("ndaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
-        ("nsaddr", ct.c_ubyte * 16 if ipv6 else ct.c_uint),
+        ("ndaddr", ct.c_ubyte * 16 if ip_version is 6 else ct.c_uint),
+        ("nsaddr", ct.c_ubyte * 16 if ip_version is 6 else ct.c_uint),
     ]
         
 # Utility function to print log
@@ -399,8 +416,7 @@ try:
                     config_file_mtime = new_mtime
                     with open(config_file.name) as f:
                         new_real_server_ips = load_config(f)
-                        if len(new_real_server_ips) > max_realservers:
-                            raise ValueError("too many real servers, {} real servers configured, {} maximum allowed".format(len(new_real_server_ips), max_realservers))
+                        check_real_servers(new_real_server_ips)
                 except Exception as e:
                     new_real_server_ips = None
                     print ("Unable to load config {} file : {}".format(config_file.name, e))
