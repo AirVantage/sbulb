@@ -102,6 +102,16 @@ Sbulb supports the sd_notify(3) mechanism, but does not require systemd or any s
 
 # Performance 
 See [our wiki page](https://github.com/AirVantage/sbulb/wiki/Benchmark) about that.
+
+# Unit Tests
+To launch unit tests : 
+
+```
+sudo python3 -m unittest                                   # all tests
+sudo python3 -m unittest sbulb.tests.IPv4TestCase          # only 1 test case
+sudo python3 -m unittest sbulb.tests.IPv4TestCase.test_lru # only 1 test
+```
+Tests needs [bcc](https://github.com/iovisor/bcc) v0.14 ([python3-bpfcc](https://packages.debian.org/buster-backports/python3-bpfcc)) and [scapy](https://scapy.net/) ([python3-scapy](https://packages.debian.org/buster/python3-scapy)).
  
 # XDP/Bpf
 
