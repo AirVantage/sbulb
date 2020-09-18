@@ -1,5 +1,5 @@
 #include <linux/ipv6.h>
-#include "ulb_checksum.c"
+#include "sbulb/bpf/checksum.c"
 
 typedef struct in6_addr ip_addr;
 

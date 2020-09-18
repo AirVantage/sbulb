@@ -6,9 +6,9 @@
 
 // include ip handling util
 #ifdef IPV6
-#include "ulb_ipv6.c"
+#include "sbulb/bpf/ipv6.c"
 #else
-#include "ulb_ipv4.c"
+#include "sbulb/bpf/ipv4.c"
 #endif
 
 // keys for association table.

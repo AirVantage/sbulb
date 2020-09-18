@@ -2,3 +2,6 @@
 /tmp/
 /.project
 /.pydevproject
+/.settings
+/**/__pycache/**/*
+__pycache__/

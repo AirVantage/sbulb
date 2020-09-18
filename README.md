@@ -2,12 +2,12 @@
 An UDP load-balancer prototype using bcc (XDP/Bpf)
 
 ```
-usage: ulb.py [-h] -vs VIRTUAL_SERVER
-              (-rs REAL_SERVER [REAL_SERVER ...] | -cfg CONFIG_FILE) -p PORT
-              [PORT ...] [-d {0,1,2,3,4}]
-              [-l {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}] [-mp MAX_PORTS]
-              [-mrs MAX_REALSERVERS] [-ma MAX_ASSOCIATIONS]
-              ifnet
+usage: sbulb [-h] -vs VIRTUAL_SERVER
+             (-rs REAL_SERVER [REAL_SERVER ...] | -cfg CONFIG_FILE) -p PORT
+             [PORT ...] [-d {0,1,2,3,4}]
+             [-l {CRITICAL,ERROR,WARNING,INFO,DEBUG,TRACE}] [-mp MAX_PORTS]
+             [-mrs MAX_REALSERVERS] [-ma MAX_ASSOCIATIONS]
+             ifnet
 
 positional arguments:
   ifnet                 network interface to load balance (e.g. eth0)
@@ -42,8 +42,7 @@ optional arguments:
                         Set the maximum number of associations. (default: 1048576)
                         This defined the maximum number of foreign peers supported at the same time.
 ```
-Eg : `sudo python3 ulb.py eth0 -vs 10.188.7.99 -rs 10.188.100.163 10.188.100.230  -p 5683 5684
-`
+Eg : `sudo python3 -m sbulb eth0 -vs 10.188.7.99 -rs 10.188.100.163 10.188.100.230  -p 5683 5684`
 
 # Behavior
 This load balancer can be considered as a Layer-4 NAT load-balancer as it only modifies IP address.
@@ -97,7 +96,7 @@ Sbulb supports the sd_notify(3) mechanism, but does not require systemd or any s
     Type=notify
     NotifyAccess=all
     Environment=PYTHONUNBUFFERED=1
-    ExecStart=/usr/bin/python3 ulb.py args...
+    ExecStart=/usr/bin/python3 -m slulb args...
     [Install]
     WantedBy=multi-user.target
 
