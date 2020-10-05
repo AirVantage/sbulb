@@ -55,8 +55,9 @@ For ingress traffic :
 
 For egress traffic :
 - we search if we have an `clientip:port/realserverip` association.
-- if yes, we drop the packet (as this server is not associated to this `clientip:port`)
-- if no, we create a new association using the source IP address(**real server IP address**) and replacing source address(**source NAT**) by the **virtual server ip address**.
+- if yes and packet comes from the associated real server , we modify source address (**source NAT**) replacing real server  address by the **virtual server ip address**.
+- if yes and packet comes from "not associated" real server, we drop the packet 
+- if no, we create a new association using the source IP address(**real server IP address**) and modifying source address(**source NAT**) by the **virtual server ip address**.
 
 We keep this association is a large LRU map as long as possible, meaning the oldest association is only removed if LRU map is full and new association must be created.
 
