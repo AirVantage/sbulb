@@ -90,7 +90,7 @@ cfg.max_ports = args.max_ports
 cfg.max_realservers = args.max_realservers
 cfg.max_associations = args.max_associations
 cfg.real_server_ips = args.real_server
-if cfg.config_file:
+if args.config_file:
     cfg.config_file = args.config_file.name
 
 try:
