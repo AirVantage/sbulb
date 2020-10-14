@@ -155,7 +155,7 @@ class LoadBalancer:
             cflags.append("-D{}={}".format(levelName,
                                            logging.getLevelName(levelName)))
         cflags.append("-D{}={}".format("LOGLEVEL",
-                                       _log_level_name.index(cfg.loglevel)))
+                                       logging.getLevelName(cfg.loglevel)))
         cflags.append("-D{}={}".format("MAX_PORTS", cfg.max_ports))
         cflags.append("-D{}={}".format("MAX_REALSERVERS", cfg.max_realservers))
         cflags.append("-D{}={}".format("MAX_ASSOCIATIONS",
