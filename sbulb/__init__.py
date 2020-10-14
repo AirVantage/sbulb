@@ -282,7 +282,7 @@ class LoadBalancer:
                         self._update_real_server(self.cfg.real_server_ips,
                                                  new_real_server_ips)
                         self.cfg.real_server_ips = new_real_server_ips
-                        self._dump_map()
+                        self._dump_real_server_map()
                         print("... new config applied.")
             # DEBUG STUFF
             # (task, pid, cpu, flags, ts, msg) =
